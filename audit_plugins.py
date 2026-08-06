@@ -13,12 +13,14 @@ from __future__ import annotations
 import sys
 
 import audit_plugins_core as _core
+import semgrep_source_scanning as _semgrep_source_scanning
 from artifact_diff_filters import install as install_artifact_diff_filters
 from audit_noise_filters import install as install_noise_filters
 from behavior_false_positive_filters import install as install_behavior_filters
 from credential_exposure_filters import install as install_credential_policy
 from metadata_build_stamp_filters import install as install_metadata_build_stamp_filters
 from network_destination_filters import install as install_network_destination_filters
+from packaged_resources import resolve_distribution_file
 from report_layout_filters import install as install_report_layout
 from semgrep_source_link_hardening import install as install_semgrep_link_hardening
 from semgrep_source_scanning import install as install_semgrep_source_scanning
@@ -26,6 +28,15 @@ from source_content_comparison import install as install_source_content_comparis
 from source_content_hardening import install as install_source_content_hardening
 from trivy_source_scanning import install as install_trivy_source_scanning
 from upstream_source_links import install as install_source_links
+
+# Source checkouts keep the local rules beside the module. Installed wheels
+# resolve the same file through distribution metadata before Semgrep runs.
+_semgrep_source_scanning._SEMGREP_RULES_FILE = str(
+    resolve_distribution_file(
+        "semgrep-rules.yml",
+        _semgrep_source_scanning.__file__,
+    )
+)
 
 install_noise_filters(_core)
 install_network_destination_filters(_core)
