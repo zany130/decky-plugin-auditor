@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: "package-validation-${{ github.ref }}"
@@ -32,6 +32,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
@@ -45,6 +48,22 @@ jobs:
 
       - name: Refresh lockfile for standalone package
         run: uv lock
+
+      - name: Commit refreshed lockfile
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.actor == 'zany130' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "build: refresh standalone package lockfile"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
 
       - name: Build source and wheel distributions
         run: uv build
