@@ -1,7 +1,7 @@
 [project]
-name = "decky-plugins-extended"
+name = "decky-plugin-auditor"
 version = "0.1.0"
-description = "A custom JSON generator for Decky Loader plugins"
+description = "Static security auditing and reviewer evidence for Decky Loader plugins"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -10,9 +10,8 @@ dependencies = [
     "PyYAML",
 ]
 
-# This repository is a script plus its deps, not an importable package. Without
-# this, setuptools' flat-layout auto-discovery treats the top-level directories
-# as packages and fails the build once there is more than one of them:
-# "Multiple top-level packages discovered in a flat-layout: ['static', 'functions']".
+# The extracted baseline remains a script-based application while behavior
+# parity with the original repository is validated. Packaging into an
+# importable src/ layout will happen in a later, behavior-preserving change.
 [tool.setuptools]
 py-modules = []
