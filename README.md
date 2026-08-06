@@ -10,7 +10,7 @@ The auditor inspects plugin release artifacts and corresponding source without i
 
 This repository is the history-preserving extraction of the auditor previously developed inside [`zany130/decky-plugins-extended`](https://github.com/zany130/decky-plugins-extended).
 
-`main` preserves the auditor behavior validated against the original repository. Packaging, reviewer capability grouping, and update-aware comparisons are being introduced through separate behavior-preserving changes.
+`main` preserves the auditor behavior validated against the original repository. The project now has an installable `decky-audit` command and an explicit boundary between the reusable engine and configuration owned by a consuming store or review system.
 
 Experimental capa-based native-binary capability analysis is preserved separately in draft PR #2 and is not part of the stable baseline.
 
@@ -29,12 +29,12 @@ Experimental capa-based native-binary capability analysis is preserved separatel
 - native-binary inventory and hashes
 - JSON and Markdown evidence reports
 
-External scanners degrade gracefully when optional, according to `security-policy.yml`. Plugin code is never imported or executed by the auditor.
+External scanners degrade gracefully when optional according to the selected policy. Plugin code is never imported or executed by the auditor.
 
 ## Requirements
 
 - Python 3.10 or newer
-- [`uv`](https://docs.astral.sh/uv/) for the documented commands
+- [`uv`](https://docs.astral.sh/uv/) for the documented development commands
 - a GitHub token for repository and release API access
 
 Optional scanners used by the complete CI workflow include ClamAV, Trivy, and Semgrep.
@@ -48,9 +48,9 @@ export GITHUB_TOKEN="your-token"
 
 ## Usage
 
-The installed project exposes `decky-audit`. The historical `python audit_plugins.py` entry point remains supported and delegates to the same implementation.
+The installed project exposes `decky-audit`. The historical `python audit_plugins.py` entry point remains available for migration compatibility.
 
-Audit one repository:
+Audit one repository without any store configuration files:
 
 ```bash
 uv run decky-audit \
@@ -58,12 +58,14 @@ uv run decky-audit \
   --output-dir security-reports
 ```
 
-Audit all repositories in a supplied list:
+Audit all repositories in a consumer-owned list:
 
 ```bash
 uv run decky-audit \
   --all \
-  --plugins-file additional_plugins.txt \
+  --plugins-file config/plugins.txt \
+  --policy config/security-policy.yml \
+  --allowlist config/security-allowlist.yml \
   --output-dir security-reports
 ```
 
@@ -72,10 +74,14 @@ Audit repositories changed relative to another Git ref:
 ```bash
 uv run decky-audit \
   --changed \
-  --plugins-file additional_plugins.txt \
+  --plugins-file config/plugins.txt \
   --base-ref origin/main \
   --output-dir security-reports
 ```
+
+`--plugins-file` is required with `--all` and `--changed`. When `--policy` is omitted, the installed command uses its built-in report-only policy. When `--allowlist` is omitted, it uses an empty allowlist. It does not automatically consume similarly named files from the current working directory.
+
+A complete example is available in [`examples/consumer`](examples/consumer).
 
 Legacy compatibility invocation:
 
@@ -95,23 +101,31 @@ Reports are written as structured JSON and reviewer-readable Markdown.
 
 ## Configuration boundary
 
-The extracted baseline temporarily includes `additional_plugins.txt`, `security-policy.yml`, and `security-allowlist.yml` so its output can be compared directly with the original repository.
+The reusable auditor owns:
 
-Long term:
+- the audit engine and report schemas
+- scanner integrations and static-analysis rules
+- built-in report-only policy defaults
+- report generation and cache behavior
 
-- this repository owns the generic audit engine, schemas, scanner integrations, and report generation;
-- consuming stores or review systems own repository lists, acceptance policy, allowlists, scheduling, and retention decisions.
+A consuming store or review system owns:
 
-Those inputs will move back to the consumer only after the standalone CLI and consumer integration are validated.
+- the repository list
+- acceptance and enforcement policy
+- allowlist decisions and approvals
+- schedules, retention, and review workflow integration
+
+The root `additional_plugins.txt`, `security-policy.yml`, and `security-allowlist.yml` files remain temporarily for the legacy scheduled migration check. They are not installed command defaults and will move back to the consuming store after its workflow is switched to the standalone CLI.
 
 ## Roadmap
 
-1. Verify structural, unit-test, and report parity with the original auditor.
-2. Add a stable package and CLI boundary without changing report behavior.
-3. Group raw findings into reviewer-oriented capability questions.
-4. Compare submissions against previously accepted versions.
-5. Expose reusable GitHub Action and workflow integrations.
-6. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
+1. Integrate the standalone CLI into the consuming Decky store.
+2. Remove the temporary store-owned migration inputs from this repository.
+3. Complete the planned Apache-2.0 licensing change.
+4. Group raw findings into reviewer-oriented capability questions.
+5. Compare submissions against previously accepted versions.
+6. Expose reusable GitHub Action and official Decky review integrations.
+7. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
 
 ## Security model
 
