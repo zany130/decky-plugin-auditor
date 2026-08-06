@@ -1,0 +1,21 @@
+version: "1"
+
+enforcement:
+  mode: report-only
+
+scanners:
+  clamav:
+    enabled: true
+    required: true
+  trivy:
+    enabled: true
+    required: true
+  semgrep:
+    enabled: true
+    required: false
+  osv_scanner:
+    enabled: false
+    required: false
+  source_artifact_diff:
+    enabled: true
+    required: true
