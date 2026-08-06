@@ -1,0 +1,159 @@
+name: Extraction Parity
+
+on:
+  pull_request:
+    paths:
+      - audit_plugins.py
+      - audit_plugins_core.py
+      - artifact_diff_filters.py
+      - audit_noise_filters.py
+      - behavior_false_positive_filters.py
+      - credential_exposure_filters.py
+      - metadata_build_stamp_filters.py
+      - network_destination_filters.py
+      - plugin_release_utils.py
+      - report_layout_filters.py
+      - semgrep_source_link_hardening.py
+      - semgrep_source_scanning.py
+      - source_content_comparison.py
+      - source_content_hardening.py
+      - trivy_source_scanning.py
+      - upstream_source_links.py
+      - security-policy.yml
+      - security-allowlist.yml
+      - semgrep-rules.yml
+      - pyproject.toml
+      - uv.lock
+      - scripts/compare_audit_reports.py
+      - .github/workflows/extraction-parity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extraction-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Old main vs extracted main
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    env:
+      BASELINE_REPOSITORY: zany130/decky-plugins-extended
+      # Exact old-main commit used for the history extraction. Do not replace
+      # this with a moving branch reference: parity needs a fixed baseline.
+      BASELINE_COMMIT: e53f60875d026d1bb94c07a58af93203f0833a02
+      PARITY_PLUGIN: https://github.com/beallio/SDH-Ludusavi
+      PYTHONHASHSEED: "0"
+      TZ: UTC
+
+    steps:
+      - name: Checkout extracted auditor
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: new
+          fetch-depth: 0
+
+      - name: Checkout pinned pre-extraction baseline
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ env.BASELINE_REPOSITORY }}
+          ref: ${{ env.BASELINE_COMMIT }}
+          path: old
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          (cd old && uv sync --frozen)
+          (cd new && uv sync --frozen)
+
+      - name: Install identical external scanners
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            apt-transport-https \
+            clamav \
+            gnupg \
+            lsb-release \
+            wget
+
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
+            | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends trivy
+
+          uv tool install --python 3.12 --with setuptools==70.3.0 semgrep==1.132.0
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+
+          sudo systemctl stop clamav-freshclam || true
+          sudo freshclam
+
+          trivy --version
+          "$(uv tool dir --bin)/semgrep" --version --disable-version-check
+          clamscan --version
+        timeout-minutes: 12
+
+      - name: Run pinned baseline audit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_STEP_SUMMARY: /dev/null
+        run: |
+          mkdir -p "$RUNNER_TEMP/old-reports"
+          cd old
+          uv run python audit_plugins.py \
+            --repository "$PARITY_PLUGIN" \
+            --output-dir "$RUNNER_TEMP/old-reports" \
+            --cache-dir "$RUNNER_TEMP/old-cache" \
+            --skip-cache
+        timeout-minutes: 12
+
+      - name: Run extracted auditor
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_STEP_SUMMARY: /dev/null
+        run: |
+          mkdir -p "$RUNNER_TEMP/new-reports"
+          cd new
+          uv run python audit_plugins.py \
+            --repository "$PARITY_PLUGIN" \
+            --output-dir "$RUNNER_TEMP/new-reports" \
+            --cache-dir "$RUNNER_TEMP/new-cache" \
+            --skip-cache
+        timeout-minutes: 12
+
+      - name: Compare structured and reviewer reports
+        run: |
+          python new/scripts/compare_audit_reports.py \
+            "$RUNNER_TEMP/old-reports" \
+            "$RUNNER_TEMP/new-reports" \
+            | tee "$RUNNER_TEMP/parity-result.txt"
+
+      - name: Upload parity evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: extraction-parity-reports
+          path: |
+            ${{ runner.temp }}/old-reports/security-report.json
+            ${{ runner.temp }}/old-reports/security-report.md
+            ${{ runner.temp }}/new-reports/security-report.json
+            ${{ runner.temp }}/new-reports/security-report.md
+            ${{ runner.temp }}/parity-result.txt
+          retention-days: 30
+          if-no-files-found: warn
