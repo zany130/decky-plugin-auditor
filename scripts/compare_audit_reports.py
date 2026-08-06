@@ -11,15 +11,21 @@ from pathlib import Path
 from typing import Any
 
 _DYNAMIC_JSON_KEYS = {"audit_timestamp", "generated_at"}
+_DYNAMIC_PLACEHOLDER = "<dynamic>"
 
 
 def _normalise_json(value: Any) -> Any:
     if isinstance(value, dict):
-        return {
-            key: _normalise_json(item)
-            for key, item in sorted(value.items())
-            if key not in _DYNAMIC_JSON_KEYS
-        }
+        normalised: dict[str, Any] = {}
+        for key, item in sorted(value.items()):
+            if key in _DYNAMIC_JSON_KEYS:
+                # Preserve the field itself so parity still fails when one
+                # report drops or adds a timestamp field. Only its value is
+                # expected to differ between otherwise identical runs.
+                normalised[key] = _DYNAMIC_PLACEHOLDER
+            else:
+                normalised[key] = _normalise_json(item)
+        return normalised
     if isinstance(value, list):
         return [_normalise_json(item) for item in value]
     return value
