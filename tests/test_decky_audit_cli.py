@@ -5,11 +5,12 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+import audit_plugins
 import decky_audit_cli
 
 
 class DeckyAuditCliTests(unittest.TestCase):
-    def test_main_delegates_arguments_and_exit_code_to_validated_entry_point(self) -> None:
+    def test_main_delegates_arguments_and_exit_code_to_consumer_boundary(self) -> None:
         argv = [
             "--repository",
             "https://github.com/example/plugin",
@@ -17,18 +18,18 @@ class DeckyAuditCliTests(unittest.TestCase):
             "reports",
         ]
 
-        with patch("audit_plugins.main", return_value=3) as audit_main:
+        with patch("consumer_configuration.run", return_value=3) as run:
             result = decky_audit_cli.main(argv)
 
         self.assertEqual(result, 3)
-        audit_main.assert_called_once_with(argv)
+        run.assert_called_once_with(audit_plugins, argv)
 
     def test_main_preserves_sys_argv_mode(self) -> None:
-        with patch("audit_plugins.main", return_value=0) as audit_main:
+        with patch("consumer_configuration.run", return_value=0) as run:
             result = decky_audit_cli.main()
 
         self.assertEqual(result, 0)
-        audit_main.assert_called_once_with(None)
+        run.assert_called_once_with(audit_plugins, None)
 
 
 if __name__ == "__main__":
