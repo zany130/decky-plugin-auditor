@@ -37,7 +37,7 @@ jobs:
   scheduled-audit:
     name: Scheduled Audit (all plugins)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -69,6 +69,9 @@ jobs:
             artifact_diff_filters.py \
             audit_noise_filters.py \
             behavior_false_positive_filters.py \
+            capa_binary_analysis.py \
+            capa_review_filters.py \
+            scripts/install_capa.sh \
             credential_exposure_filters.py \
             metadata_build_stamp_filters.py \
             network_destination_filters.py \
@@ -107,11 +110,20 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/trivy.list
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends trivy || echo "::warning::trivy install failed"
+
           uv tool install --python 3.12 --with setuptools==70.3.0 semgrep==1.132.0
           SEMGREP_BIN_DIR=$(uv tool dir --bin)
           echo "$SEMGREP_BIN_DIR" >> "$GITHUB_PATH"
           export PATH="$SEMGREP_BIN_DIR:$PATH"
           semgrep --version --disable-version-check
+
+          # Official standalone capa v9.4.0, including matching embedded rules,
+          # verified against the release asset's published SHA-256.
+          bash scripts/install_capa.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          capa --version
+
           sudo apt-get install -y --no-install-recommends clamav || {
             echo "::error::clamav install failed"
             exit 1
@@ -126,7 +138,7 @@ jobs:
             echo "::error::No ClamAV signature databases found after freshclam"
             exit 1
           }
-        timeout-minutes: 10
+        timeout-minutes: 15
 
       - name: Run audit on all configured repositories
         env:
@@ -146,7 +158,7 @@ jobs:
             --all \
             --output-dir security-reports \
             --cache-dir .audit-cache
-        timeout-minutes: 45
+        timeout-minutes: 100
 
       - name: Save audit cache
         # Save cache after scanning so newly generated reports persist for the
