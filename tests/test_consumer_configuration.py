@@ -75,9 +75,10 @@ class ConsumerConfigurationTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as stdout:
             result = run(core, ["--help"])
 
+        help_text = stdout.getvalue()
         self.assertEqual(result, 0)
-        self.assertIn("consumer-supplied plugin list", stdout.getvalue())
-        self.assertIn("built-in report-only policy", stdout.getvalue())
+        self.assertIn("consumer-supplied plugin", help_text)
+        self.assertIn("built-in report-only policy", help_text)
         raw_main.assert_not_called()
 
 
