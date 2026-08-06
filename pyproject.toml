@@ -10,8 +10,29 @@ dependencies = [
     "PyYAML",
 ]
 
-# The extracted baseline remains a script-based application while behavior
-# parity with the original repository is validated. Packaging into an
-# importable src/ layout will happen in a later, behavior-preserving change.
+[project.scripts]
+decky-audit = "decky_audit_cli:main"
+
+# Keep the validated flat module layout installable while the public CLI
+# boundary is established. Moving implementation modules into src/decky_audit
+# will be a separate behavior-preserving change after consumers use the CLI.
 [tool.setuptools]
-py-modules = []
+py-modules = [
+    "artifact_diff_filters",
+    "audit_noise_filters",
+    "audit_plugins",
+    "audit_plugins_core",
+    "behavior_false_positive_filters",
+    "credential_exposure_filters",
+    "decky_audit_cli",
+    "metadata_build_stamp_filters",
+    "network_destination_filters",
+    "plugin_release_utils",
+    "report_layout_filters",
+    "semgrep_source_link_hardening",
+    "semgrep_source_scanning",
+    "source_content_comparison",
+    "source_content_hardening",
+    "trivy_source_scanning",
+    "upstream_source_links",
+]
