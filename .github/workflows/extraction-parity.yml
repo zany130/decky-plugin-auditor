@@ -75,10 +75,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Python dependencies
+      # Use one environment for both copies. This prevents stale project
+      # metadata or lockfile differences from affecting the parity result and
+      # guarantees both auditors import the exact same dependency versions.
+      - name: Install shared Python dependencies
         run: |
-          (cd old && uv sync --frozen)
-          (cd new && uv sync --frozen)
+          uv venv "$RUNNER_TEMP/parity-venv" --python 3.12
+          uv pip install \
+            --python "$RUNNER_TEMP/parity-venv/bin/python" \
+            requests \
+            urllib3 \
+            PyYAML
+          "$RUNNER_TEMP/parity-venv/bin/python" - <<'PYEOF'
+          import requests, urllib3, yaml
+          print("requests", requests.__version__)
+          print("urllib3", urllib3.__version__)
+          print("PyYAML", yaml.__version__)
+          PYEOF
 
       - name: Install identical external scanners
         run: |
@@ -116,7 +129,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/old-reports"
           cd old
-          uv run python audit_plugins.py \
+          "$RUNNER_TEMP/parity-venv/bin/python" audit_plugins.py \
             --repository "$PARITY_PLUGIN" \
             --output-dir "$RUNNER_TEMP/old-reports" \
             --cache-dir "$RUNNER_TEMP/old-cache" \
@@ -130,7 +143,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/new-reports"
           cd new
-          uv run python audit_plugins.py \
+          "$RUNNER_TEMP/parity-venv/bin/python" audit_plugins.py \
             --repository "$PARITY_PLUGIN" \
             --output-dir "$RUNNER_TEMP/new-reports" \
             --cache-dir "$RUNNER_TEMP/new-cache" \
@@ -139,7 +152,7 @@ jobs:
 
       - name: Compare structured and reviewer reports
         run: |
-          python new/scripts/compare_audit_reports.py \
+          "$RUNNER_TEMP/parity-venv/bin/python" new/scripts/compare_audit_reports.py \
             "$RUNNER_TEMP/old-reports" \
             "$RUNNER_TEMP/new-reports" \
             | tee "$RUNNER_TEMP/parity-result.txt"
