@@ -10,7 +10,7 @@ The auditor inspects plugin release artifacts and corresponding source without i
 
 This repository is the history-preserving extraction of the auditor previously developed inside [`zany130/decky-plugins-extended`](https://github.com/zany130/decky-plugins-extended).
 
-The stable branch preserves the auditor behavior validated against the original repository. Packaging, reviewer capability grouping, and update-aware comparisons are being introduced through separate behavior-preserving changes.
+`main` preserves the auditor behavior validated against the original repository. Packaging, reviewer capability grouping, and update-aware comparisons are being introduced through separate behavior-preserving changes.
 
 Experimental capa-based native-binary capability analysis is preserved separately in draft PR #2 and is not part of the stable baseline.
 
