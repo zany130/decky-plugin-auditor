@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "decky-plugin-auditor"
 version = "0.1.0"
@@ -27,6 +31,7 @@ py-modules = [
     "decky_audit_cli",
     "metadata_build_stamp_filters",
     "network_destination_filters",
+    "packaged_resources",
     "plugin_release_utils",
     "report_layout_filters",
     "semgrep_source_link_hardening",
@@ -36,3 +41,6 @@ py-modules = [
     "trivy_source_scanning",
     "upstream_source_links",
 ]
+
+[tool.setuptools.data-files]
+"." = ["semgrep-rules.yml"]
