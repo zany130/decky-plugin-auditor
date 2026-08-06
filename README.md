@@ -10,7 +10,7 @@ The auditor inspects plugin release artifacts and corresponding source without i
 
 This repository is the history-preserving extraction of the auditor previously developed inside [`zany130/decky-plugins-extended`](https://github.com/zany130/decky-plugins-extended).
 
-The initial `main` branch intentionally preserves the previous behavior and flat script layout. Repository cleanup, packaging, reviewer capability grouping, and update-aware comparisons will be introduced through separate changes after parity is verified.
+`main` preserves the auditor behavior validated against the original repository. Packaging, reviewer capability grouping, and update-aware comparisons are being introduced through separate behavior-preserving changes.
 
 Experimental capa-based native-binary capability analysis is preserved separately in draft PR #2 and is not part of the stable baseline.
 
@@ -48,10 +48,12 @@ export GITHUB_TOKEN="your-token"
 
 ## Usage
 
+The installed project exposes `decky-audit`. The historical `python audit_plugins.py` entry point remains supported and delegates to the same implementation.
+
 Audit one repository:
 
 ```bash
-uv run python audit_plugins.py \
+uv run decky-audit \
   --repository https://github.com/owner/repository \
   --output-dir security-reports
 ```
@@ -59,7 +61,7 @@ uv run python audit_plugins.py \
 Audit all repositories in a supplied list:
 
 ```bash
-uv run python audit_plugins.py \
+uv run decky-audit \
   --all \
   --plugins-file additional_plugins.txt \
   --output-dir security-reports
@@ -68,10 +70,18 @@ uv run python audit_plugins.py \
 Audit repositories changed relative to another Git ref:
 
 ```bash
-uv run python audit_plugins.py \
+uv run decky-audit \
   --changed \
   --plugins-file additional_plugins.txt \
   --base-ref origin/main \
+  --output-dir security-reports
+```
+
+Legacy compatibility invocation:
+
+```bash
+uv run python audit_plugins.py \
+  --repository https://github.com/owner/repository \
   --output-dir security-reports
 ```
 
@@ -92,7 +102,7 @@ Long term:
 - this repository owns the generic audit engine, schemas, scanner integrations, and report generation;
 - consuming stores or review systems own repository lists, acceptance policy, allowlists, scheduling, and retention decisions.
 
-Those inputs will move back to the consumer only after report parity is demonstrated.
+Those inputs will move back to the consumer only after the standalone CLI and consumer integration are validated.
 
 ## Roadmap
 
