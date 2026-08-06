@@ -5,7 +5,9 @@ on:
     paths:
       - README.md
       - audit_plugins.py
+      - consumer_configuration.py
       - decky_audit_cli.py
+      - examples/**
       - packaged_resources.py
       - semgrep_source_scanning.py
       - semgrep-rules.yml
@@ -25,7 +27,7 @@ concurrency:
 
 jobs:
   package:
-    name: Build and installed CLI parity
+    name: Build and external consumer parity
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -55,13 +57,14 @@ jobs:
           "$RUNNER_TEMP/package-venv/bin/python" -m pip install --upgrade pip
           "$RUNNER_TEMP/package-venv/bin/python" -m pip install dist/*.whl
 
-      - name: Verify installed command and packaged Semgrep rules
+      - name: Verify installed command, resources, and list requirement
         run: |
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/package-venv/bin/decky-audit" --help
           "$RUNNER_TEMP/package-venv/bin/python" - <<'PYEOF'
           import os
           import audit_plugins
+          import consumer_configuration
           import semgrep_source_scanning
 
           rules = semgrep_source_scanning._SEMGREP_RULES_FILE
@@ -69,6 +72,18 @@ jobs:
           if not os.path.isfile(rules):
               raise SystemExit(f"Packaged Semgrep rules not found: {rules}")
           PYEOF
+
+          set +e
+          "$RUNNER_TEMP/package-venv/bin/decky-audit" --all \
+            > "$RUNNER_TEMP/missing-plugins-file.log" 2>&1
+          status=$?
+          set -e
+          if [[ "$status" -ne 2 ]]; then
+            cat "$RUNNER_TEMP/missing-plugins-file.log"
+            echo "ERROR: --all without --plugins-file exited $status instead of 2"
+            exit 1
+          fi
+          grep -q -- "--plugins-file is required" "$RUNNER_TEMP/missing-plugins-file.log"
 
       - name: Install pinned Semgrep for parity audit
         run: |
@@ -78,9 +93,13 @@ jobs:
           export PATH="$SEMGREP_BIN_DIR:$PATH"
           semgrep --version --disable-version-check
 
-      - name: Create package-validation policy
+      - name: Create external consumer configuration
         run: |
-          cat > "$RUNNER_TEMP/package-policy.yml" <<'YAML'
+          mkdir -p "$RUNNER_TEMP/consumer"
+          cat > "$RUNNER_TEMP/consumer/plugins.txt" <<'EOF'
+          https://github.com/beallio/SDH-Ludusavi
+          EOF
+          cat > "$RUNNER_TEMP/consumer/policy.yml" <<'YAML'
           version: "1"
           enforcement:
             mode: report-only
@@ -101,26 +120,32 @@ jobs:
               enabled: true
               required: true
           YAML
+          cat > "$RUNNER_TEMP/consumer/allowlist.yml" <<'YAML'
+          version: "1"
+          exceptions: []
+          YAML
 
-      - name: Compare legacy script and installed CLI reports
+      - name: Compare legacy script and installed external consumer reports
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           rm -rf "$RUNNER_TEMP/legacy-reports" "$RUNNER_TEMP/installed-reports"
           uv run python audit_plugins.py \
-            --repository https://github.com/beallio/SDH-Ludusavi \
-            --policy "$RUNNER_TEMP/package-policy.yml" \
-            --allowlist "$GITHUB_WORKSPACE/security-allowlist.yml" \
+            --all \
+            --plugins-file "$RUNNER_TEMP/consumer/plugins.txt" \
+            --policy "$RUNNER_TEMP/consumer/policy.yml" \
+            --allowlist "$RUNNER_TEMP/consumer/allowlist.yml" \
             --output-dir "$RUNNER_TEMP/legacy-reports" \
             --cache-dir "$RUNNER_TEMP/legacy-cache" \
             --skip-cache
 
           (
-            cd "$RUNNER_TEMP"
+            cd "$RUNNER_TEMP/consumer"
             "$RUNNER_TEMP/package-venv/bin/decky-audit" \
-              --repository https://github.com/beallio/SDH-Ludusavi \
-              --policy "$RUNNER_TEMP/package-policy.yml" \
-              --allowlist "$GITHUB_WORKSPACE/security-allowlist.yml" \
+              --all \
+              --plugins-file "$RUNNER_TEMP/consumer/plugins.txt" \
+              --policy "$RUNNER_TEMP/consumer/policy.yml" \
+              --allowlist "$RUNNER_TEMP/consumer/allowlist.yml" \
               --output-dir "$RUNNER_TEMP/installed-reports" \
               --cache-dir "$RUNNER_TEMP/installed-cache" \
               --skip-cache
@@ -138,6 +163,8 @@ jobs:
           path: |
             uv.lock
             dist/*
+            ${{ runner.temp }}/missing-plugins-file.log
+            ${{ runner.temp }}/consumer/*
             ${{ runner.temp }}/legacy-reports/security-report.json
             ${{ runner.temp }}/legacy-reports/security-report.md
             ${{ runner.temp }}/installed-reports/security-report.json
