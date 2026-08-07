@@ -13,7 +13,7 @@ name: Plugin Security Audit
 on:
   pull_request:
     paths:
-      - "*.py"
+      - "**/*.py"
       - examples/consumer/**
       - semgrep-rules.yml
       - semgrep-fixtures/**
