@@ -11,6 +11,7 @@ on:
       - decky_audit_cli.py
       - examples/**
       - packaged_resources.py
+      - reviewer_capability_summaries.py
       - semgrep_source_scanning.py
       - semgrep-rules.yml
       - pyproject.toml
@@ -121,7 +122,7 @@ jobs:
           "$RUNNER_TEMP/package-venv/bin/python" -m pip install --upgrade pip
           "$RUNNER_TEMP/package-venv/bin/python" -m pip install dist/*.whl
 
-      - name: Verify installed command, resources, and list requirement
+      - name: Verify installed command, resources, capability schema, and list requirement
         run: |
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/package-venv/bin/decky-audit" --help
@@ -129,12 +130,17 @@ jobs:
           import os
           import audit_plugins
           import consumer_configuration
+          import reviewer_capability_summaries
           import semgrep_source_scanning
 
           rules = semgrep_source_scanning._SEMGREP_RULES_FILE
           print(f"Packaged Semgrep rules: {rules}")
           if not os.path.isfile(rules):
               raise SystemExit(f"Packaged Semgrep rules not found: {rules}")
+          if "reviewer_capabilities" not in audit_plugins.AuditReport.__dataclass_fields__:
+              raise SystemExit("Installed AuditReport is missing reviewer_capabilities")
+          if reviewer_capability_summaries._CAPABILITY_SCHEMA_VERSION != "1":
+              raise SystemExit("Unexpected reviewer capability schema version")
           PYEOF
 
           set +e
