@@ -11,6 +11,7 @@ on:
       - decky_audit_cli.py
       - examples/**
       - packaged_resources.py
+      - reviewer_capabilities.py
       - semgrep_source_scanning.py
       - semgrep-rules.yml
       - pyproject.toml

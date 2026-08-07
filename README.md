@@ -27,6 +27,7 @@ Experimental capa-based native-binary capability analysis is preserved separatel
 - behavioral heuristics such as command execution and system modification
 - immutable source links
 - native-binary inventory and hashes
+- reviewer-oriented capability summaries derived from the underlying evidence
 - JSON and Markdown evidence reports
 
 External scanners degrade gracefully when optional according to the selected policy. Plugin code is never imported or executed by the auditor.
@@ -97,7 +98,9 @@ Run the unit tests:
 GITHUB_TOKEN=test-token uv run python -m unittest discover -s tests -v
 ```
 
-Reports are written as structured JSON and reviewer-readable Markdown.
+Reports are written as structured JSON and reviewer-readable Markdown. The JSON report includes a stable `reviewer_capabilities` list, and the Markdown report surfaces the same capability questions before the raw findings. Capability summaries are derived from existing findings and structured evidence only; they do not change classification, risk scoring, allowlist behavior, or enforcement.
+
+A capability marked `not_observed` means the static audit found no supporting evidence for that question. It is not proof that the capability is absent.
 
 ## Configuration boundary
 
@@ -122,15 +125,14 @@ Consumer-owned configuration is supplied explicitly at runtime. The standalone r
 
 ## Roadmap
 
-1. Group raw findings into reviewer-oriented capability questions.
-2. Compare submissions against previously accepted versions.
-3. Expose reusable GitHub Action and official Decky review integrations.
-4. Add reviewer history/persistence and a documented threat model.
-5. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
+1. Compare submissions against previously accepted versions, including capability-level changes.
+2. Expose reusable GitHub Action and official Decky review integrations.
+3. Add reviewer history/persistence and a documented threat model.
+4. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
 
 ## Security model
 
-The auditor performs static inspection only. It treats release artifacts and source repositories as untrusted input and does not import or execute plugin code. Findings are reviewer evidence, not proof that a plugin is malicious or safe.
+The auditor performs static inspection only. It treats release artifacts and source repositories as untrusted input and does not import or execute plugin code. Findings and reviewer capability summaries are evidence, not proof that a plugin is malicious or safe.
 
 ## License and provenance
 
