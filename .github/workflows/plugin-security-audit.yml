@@ -1,53 +1,28 @@
-# Plugin Security Audit Workflow
+# Reusable Decky Plugin Auditor validation workflow.
 #
-# Performs static security analysis on Decky Loader plugin repositories and
-# their release ZIP artifacts.  Plugin code is NEVER executed.
+# This repository owns the audit engine, scanner integrations, rules, tests,
+# and report behavior. Repository lists, acceptance policy, allowlists,
+# schedules, and retention belong to consuming stores or review systems.
 #
-# Enforcement mode is controlled by security-policy.yml:
-#   enforcement.mode: report-only   (default) — findings are surfaced but do
-#                                   not block merging.
-#   enforcement.mode: enforce       — BLOCK exits 2, MANUAL_REVIEW exits 3.
-#
-# Internal audit errors (download failure, corrupt ZIP, infrastructure faults)
-# always fail CI in both modes.
-#
-# To switch to enforcement mode after evaluating false-positive rates, update
-# security-policy.yml and open a separate PR.
+# CI therefore validates the engine itself with unit/rule controls plus one
+# explicit end-to-end repository audit. It does not maintain or audit a store
+# catalog from this repository.
 
 name: Plugin Security Audit
 
 on:
   pull_request:
     paths:
-      - additional_plugins.txt
-      - audit_plugins.py
-      - metadata_build_stamp_filters.py
-      - network_destination_filters.py
-      - semgrep_source_scanning.py
+      - "**/*.py"
+      - examples/consumer/**
       - semgrep-rules.yml
       - semgrep-fixtures/**
-      - source_content_comparison.py
-      - source_content_hardening.py
-      - trivy_source_scanning.py
-      - plugin_release_utils.py
-      - security-policy.yml
-      - security-allowlist.yml
       - pyproject.toml
       - uv.lock
       - tests/**
       - .github/workflows/plugin-security-audit.yml
-      - .github/workflows/scheduled-security-audit.yml
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "Audit mode: 'changed' or 'all'"
-        required: false
-        default: changed
 
-# Least-privilege: read-only repository access.
-# No deployment credentials or Cloudflare secrets are accessible here.
-# This workflow uses pull_request (not pull_request_target) so it always
-# runs against the PR branch, never with elevated merge-queue permissions.
 permissions:
   contents: read
 
@@ -56,138 +31,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout repository
-        # actions/checkout v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 0
-
-      - name: Install uv
-        # astral-sh/setup-uv v9.0.0
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        # actions/setup-python v7.0.0
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version-file: "pyproject.toml"
-
-      - name: Install optional security scanners
-        # Scanners are installed from verified package managers; no piped-shell downloads.
-        # The audit degrades gracefully when scanners are unavailable outside CI.
-        run: |
-          # Trivy (static vulnerability scanner) – from the official apt repo.
-          # See https://aquasecurity.github.io/trivy/latest/getting-started/installation/
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb \
-            $(lsb_release -sc) main" \
-            | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends trivy || echo "::warning::trivy install failed; audit will skip it"
-
-          # Semgrep – pin the same engine used by the upstream Decky audit work.
-          uv tool install --python 3.12 --with setuptools==70.3.0 semgrep==1.132.0
-          SEMGREP_BIN_DIR=$(uv tool dir --bin)
-          echo "$SEMGREP_BIN_DIR" >> "$GITHUB_PATH"
-          export PATH="$SEMGREP_BIN_DIR:$PATH"
-          semgrep --version --disable-version-check
-
-          # ClamAV (malware signature scanner)
-          sudo apt-get install -y --no-install-recommends clamav || {
-            echo "::error::clamav install failed"
-            exit 1
-          }
-          # Stop the auto-updater daemon so freshclam can run without lock conflicts.
-          sudo systemctl stop clamav-freshclam || true
-          # Update signature databases; fail loudly on error.
-          sudo freshclam
-          # Verify that usable signature databases are present.
-          clamscan --version || { echo "::error::clamscan unavailable after install"; exit 1; }
-          CLAMD_DB_DIR=$(clamscan --debug 2>&1 | grep -oP 'Loading DB:\s*\K[^ ]+' | head -1 || echo "/var/lib/clamav")
-          ls "${CLAMD_DB_DIR:-/var/lib/clamav}"/*.c?d 2>/dev/null || ls /var/lib/clamav/*.c?d || {
-            echo "::error::No ClamAV signature databases found after freshclam"
-            exit 1
-          }
-
-        timeout-minutes: 10
-
-      - name: Determine repositories to audit
-        id: repos
-        env:
-          GITHUB_BASE_REF: ${{ github.base_ref }}
-          EVENT_NAME: ${{ github.event_name }}
-          DISPATCH_MODE: ${{ github.event.inputs.mode }}
-        run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            echo "audit_mode=changed" >> "$GITHUB_OUTPUT"
-            echo "base_ref=origin/${GITHUB_BASE_REF}" >> "$GITHUB_OUTPUT"
-          else
-            mode="${DISPATCH_MODE:-changed}"
-            echo "audit_mode=${mode}" >> "$GITHUB_OUTPUT"
-            echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Run security audit
-        id: audit
-        env:
-          # GITHUB_TOKEN is provided by the runner; never printed.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AUDIT_MODE: ${{ steps.repos.outputs.audit_mode }}
-          BASE_REF: ${{ steps.repos.outputs.base_ref }}
-        run: |
-          mkdir -p security-reports
-
-          if [[ "$AUDIT_MODE" == "all" ]]; then
-            uv run python audit_plugins.py \
-              --all \
-              --output-dir security-reports \
-              --base-ref "$BASE_REF"
-          else
-            uv run python audit_plugins.py \
-              --changed \
-              --output-dir security-reports \
-              --base-ref "$BASE_REF"
-          fi
-        timeout-minutes: 20
-        continue-on-error: false
-
-      - name: Add audit summary to job summary
-        if: always()
-        run: |
-          if [[ -f security-reports/security-report.md ]]; then
-            cat security-reports/security-report.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "## Security Audit" >> "$GITHUB_STEP_SUMMARY"
-            echo "⚠️ No report generated." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload audit reports as artifacts
-        # Only the redacted audit reports are uploaded; extracted plugin content is not.
-        if: always()
-        # actions/upload-artifact v4.6.2
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: security-audit-reports
-          path: |
-            security-reports/security-report.json
-            security-reports/security-report.md
-          retention-days: 30
-          if-no-files-found: warn
-
   # -------------------------------------------------------------------------
-  # Run the existing unit tests and the checked-in Semgrep rule controls.
+  # Unit tests and checked-in Semgrep rule controls.
   # -------------------------------------------------------------------------
   unit-tests:
     name: Unit Tests
@@ -207,6 +52,9 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version-file: "pyproject.toml"
+
+      - name: Sync frozen auditor environment
+        run: uv sync --frozen --no-dev
 
       - name: Install pinned Semgrep
         run: |
@@ -254,33 +102,22 @@ jobs:
       - name: Run all tests
         env:
           GITHUB_TOKEN: test-token
-        run: |
-          uv run python -m unittest discover -s tests -v
+        run: uv run --frozen python -m unittest discover -s tests -v
         timeout-minutes: 5
 
   # -------------------------------------------------------------------------
-  # Smoke audit: end-to-end audit of one real plugin to prove the full
-  # pipeline works whenever audit implementation files change.
-  #
-  # Chosen plugin: https://github.com/beallio/SDH-Ludusavi
-  # Rationale: actively maintained, has a stable release with exactly one ZIP,
-  # has a valid plugin.json, and has been present in additional_plugins.txt
-  # since the repository was created.
+  # Smoke audit: one explicit real plugin proves the full reusable pipeline.
+  # The checked-in example policy/allowlist are passed explicitly so this job
+  # does not depend on store-owned root configuration.
   # -------------------------------------------------------------------------
   smoke-audit:
     name: Smoke Audit (end-to-end)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Only run when the audit implementation itself changes.
-    if: >
-      github.event_name == 'pull_request' ||
-      github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
@@ -291,6 +128,9 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version-file: "pyproject.toml"
+
+      - name: Sync frozen auditor environment
+        run: uv sync --frozen --no-dev
 
       - name: Install security scanners for smoke audit
         run: |
@@ -307,11 +147,13 @@ jobs:
             echo "::error::trivy install failed; smoke audit requires trivy"
             exit 1
           }
+
           uv tool install --python 3.12 --with setuptools==70.3.0 semgrep==1.132.0
           SEMGREP_BIN_DIR=$(uv tool dir --bin)
           echo "$SEMGREP_BIN_DIR" >> "$GITHUB_PATH"
           export PATH="$SEMGREP_BIN_DIR:$PATH"
           semgrep --version --disable-version-check
+
           sudo apt-get install -y --no-install-recommends clamav || {
             echo "::error::clamav install failed; smoke audit requires clamav"
             exit 1
@@ -330,10 +172,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p smoke-reports
-          uv run python audit_plugins.py \
+          uv run --frozen decky-audit \
             --repository https://github.com/beallio/SDH-Ludusavi \
+            --policy "$GITHUB_WORKSPACE/examples/consumer/policy.yml" \
+            --allowlist "$GITHUB_WORKSPACE/examples/consumer/allowlist.yml" \
             --output-dir smoke-reports \
             --skip-cache
+
           # Verify that at least one report was produced, Trivy and Semgrep
           # scanned both scopes, exact-source content comparison ran, and
           # structured network provenance contains only redacted origins.
@@ -352,6 +197,7 @@ jobs:
           if r.get("final_classification") == "AUDIT_ERROR":
               print("ERROR: Smoke audit returned AUDIT_ERROR.")
               sys.exit(1)
+
           trivy = next(
               (s for s in r.get("scanner_statuses", []) if s.get("name") == "trivy"),
               None,
