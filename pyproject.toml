@@ -38,6 +38,7 @@ py-modules = [
     "packaged_resources",
     "plugin_release_utils",
     "report_layout_filters",
+    "reviewer_capability_summaries",
     "semgrep_source_link_hardening",
     "semgrep_source_scanning",
     "source_content_comparison",
