@@ -98,9 +98,9 @@ Run the unit tests:
 GITHUB_TOKEN=test-token uv run python -m unittest discover -s tests -v
 ```
 
-Reports are written as structured JSON and reviewer-readable Markdown. The JSON report includes a stable `reviewer_capabilities` list, and the Markdown report surfaces the same capability questions before the raw findings. Capability summaries are derived from existing findings and structured evidence only; they do not change classification, risk scoring, allowlist behavior, or enforcement.
+Reports are written as structured JSON and reviewer-readable Markdown. The JSON report includes a stable `reviewer_capabilities` list plus `reviewer_capabilities_schema_version`, and the Markdown report surfaces the same capability questions before the raw findings. Capability summaries are derived from existing findings and structured evidence only; they do not change classification, risk scoring, allowlist behavior, or enforcement.
 
-A capability marked `not_observed` means the static audit found no supporting evidence for that question. It is not proof that the capability is absent.
+The capability layer distinguishes `observed`, `not_observed`, and `unknown`. `not_observed` means relevant audit coverage completed without supporting evidence. `unknown` means the relevant scanner, exact-source comparison, or broader audit coverage was incomplete or unavailable. Neither status proves that a capability is impossible. Malware and known vulnerabilities are reported as separate capability questions so ClamAV coverage is not conflated with Trivy/OSV-style vulnerability coverage.
 
 ## Configuration boundary
 
