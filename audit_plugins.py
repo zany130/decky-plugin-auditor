@@ -23,6 +23,7 @@ from metadata_build_stamp_filters import install as install_metadata_build_stamp
 from network_destination_filters import install as install_network_destination_filters
 from packaged_resources import resolve_distribution_file
 from report_layout_filters import install as install_report_layout
+from reviewer_capability_source_hardening import install as install_reviewer_source_hardening
 from reviewer_capability_summaries import install as install_reviewer_capabilities
 from semgrep_source_link_hardening import install as install_semgrep_link_hardening
 from semgrep_source_scanning import install as install_semgrep_source_scanning
@@ -53,6 +54,7 @@ install_artifact_diff_filters(_core)
 install_source_links(_core)
 install_semgrep_link_hardening(_core)
 install_reviewer_capabilities(_core)
+install_reviewer_source_hardening(_core)
 install_report_layout(_core)
 
 if __name__ == "__main__":
