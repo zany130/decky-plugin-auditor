@@ -27,6 +27,7 @@ Experimental capa-based native-binary capability analysis is preserved separatel
 - behavioral heuristics such as command execution and system modification
 - immutable source links
 - native-binary inventory and hashes
+- versioned reviewer-oriented capability questions derived from the evidence above
 - JSON and Markdown evidence reports
 
 External scanners degrade gracefully when optional according to the selected policy. Plugin code is never imported or executed by the auditor.
@@ -99,6 +100,19 @@ GITHUB_TOKEN=test-token uv run python -m unittest discover -s tests -v
 
 Reports are written as structured JSON and reviewer-readable Markdown.
 
+## Reviewer capability summary
+
+Each report includes a versioned `reviewer_capabilities` object and a matching Markdown section. The summary groups existing audit evidence into a fixed set of reviewer questions covering command execution, dynamic or obfuscated code, elevated privileges, host modification, network communication, sensitive-data access, embedded credentials, native/opaque code, release-to-source integrity, and malware or known vulnerabilities.
+
+Capability status is one of:
+
+- `detected` — current audit evidence directly supports the reviewer question
+- `review` — lower-confidence, lower-severity, grouped, or allowlisted evidence still deserves context review
+- `not_detected` — the current static audit found no matching evidence; this is not proof that the capability is impossible
+- `unknown` — relevant audit or scanner coverage was incomplete
+
+The capability layer is derived after the normal audit completes. It does not change findings, allowlisting, scanner policy, final classification, or risk score. Evidence is deterministically ordered and bounded in the capability summary while the complete raw findings remain available in the same report.
+
 ## Configuration boundary
 
 The reusable auditor owns:
@@ -122,11 +136,10 @@ Consumer-owned configuration is supplied explicitly at runtime. The standalone r
 
 ## Roadmap
 
-1. Group raw findings into reviewer-oriented capability questions.
-2. Compare submissions against previously accepted versions.
-3. Expose reusable GitHub Action and official Decky review integrations.
-4. Add reviewer history/persistence and a documented threat model.
-5. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
+1. Compare reviewer capabilities against previously accepted versions.
+2. Expose reusable GitHub Action and official Decky review integrations.
+3. Add reviewer history/persistence and a documented threat model.
+4. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
 
 ## Security model
 
