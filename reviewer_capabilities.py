@@ -14,6 +14,9 @@ from types import ModuleType
 from typing import Any, Callable
 
 
+REVIEWER_CAPABILITY_SCHEMA_VERSION = "1"
+
+
 @dataclass(frozen=True)
 class _CapabilitySpec:
     capability_id: str
@@ -58,14 +61,27 @@ _CAPABILITIES = (
         "Does the published release materially differ from the exact source used for review?",
     ),
     _CapabilitySpec(
+        "malware",
+        "Malware detection",
+        "Did malware scanning identify malicious content in the published release?",
+    ),
+    _CapabilitySpec(
         "known_vulnerabilities",
         "Known vulnerabilities",
         "Did dependency or vulnerability scanners identify known vulnerable components?",
     ),
 )
 
-_CONFIDENCE_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3}
+_CONFIDENCE_RANK = {"none": 0, "unknown": 0, "low": 1, "medium": 2, "high": 3}
+_CLASSIFICATION_RANK = {
+    "BLOCK": 0,
+    "MANUAL_REVIEW": 1,
+    "PASS_WITH_WARNINGS": 2,
+    "PASS": 3,
+}
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _MAX_EVIDENCE_PER_CAPABILITY = 20
+_INCOMPLETE_SCANNER_STATES = {"failed", "unavailable", "unsupported"}
 
 
 def _value(item: object, name: str, default: Any = None) -> Any:
@@ -81,6 +97,16 @@ def _rule_key(finding: object) -> str:
 
 def _scanner_key(finding: object) -> str:
     return str(_value(finding, "scanner", "") or "").casefold().replace("_", "-")
+
+
+def _finding_sort_key(finding: object) -> tuple[Any, ...]:
+    return (
+        _CLASSIFICATION_RANK.get(str(_value(finding, "classification", "") or ""), 99),
+        _SEVERITY_RANK.get(str(_value(finding, "severity", "") or "").casefold(), 99),
+        str(_value(finding, "rule_id", "") or ""),
+        str(_value(finding, "path", "") or ""),
+        int(_value(finding, "line", 0) or 0),
+    )
 
 
 def _finding_confidence(finding: object) -> str:
@@ -164,6 +190,9 @@ def _matches_finding(capability_id: str, finding: object) -> bool:
             or "ARTIFACT_SOURCE" in rule
         )
 
+    if capability_id == "malware":
+        return rule == "MALWARE" or scanner == "clamav"
+
     if capability_id == "known_vulnerabilities":
         return (
             scanner in {"trivy", "osv", "osv-scanner"}
@@ -188,36 +217,74 @@ def _finding_evidence(finding: object) -> dict[str, Any]:
     }
 
 
+def _normalise_source(source: object) -> dict[str, Any]:
+    record = {
+        "path": str(_value(source, "path", "") or ""),
+        "line": int(_value(source, "line", 0) or 0),
+        "provenance": str(_value(source, "provenance", "") or ""),
+        "confidence": str(_value(source, "confidence", "unknown") or "unknown"),
+    }
+    for key in ("source_status", "source_url", "source_path", "source_commit"):
+        value = _value(source, key, None)
+        if value:
+            record[key] = str(value)
+    return record
+
+
 def _network_evidence(report: object) -> list[tuple[dict[str, Any], str]]:
     destinations = list(getattr(report, "network_destinations", []) or [])
     evidence: list[tuple[dict[str, Any], str]] = []
     if destinations:
+        destinations.sort(
+            key=lambda item: (
+                -_CONFIDENCE_RANK.get(str(_value(item, "confidence", "unknown") or "unknown"), 0),
+                str(_value(item, "destination", "") or "").casefold(),
+            )
+        )
         for item in destinations:
             confidence = str(_value(item, "confidence", "low") or "low")
+            sources = [_normalise_source(source) for source in list(_value(item, "sources", []) or [])]
+            sources.sort(
+                key=lambda source: (
+                    source.get("path", ""),
+                    int(source.get("line", 0) or 0),
+                    source.get("provenance", ""),
+                    source.get("source_url", ""),
+                )
+            )
             evidence.append(({
                 "kind": "network_destination",
                 "destination": str(_value(item, "destination", "") or ""),
                 "confidence": confidence,
                 "review_priority": str(_value(item, "review_priority", "") or ""),
                 "reason": str(_value(item, "reason", "") or ""),
+                "sources": sources[:3],
             }, confidence if confidence in _CONFIDENCE_RANK else "low"))
         return evidence
 
     # Older cached reports may only have the legacy flat destination list.
-    for destination in list(getattr(report, "extracted_domains", []) or []):
+    for destination in sorted(str(item) for item in list(getattr(report, "extracted_domains", []) or [])):
         evidence.append(({
             "kind": "network_destination",
-            "destination": str(destination),
+            "destination": destination,
             "confidence": "low",
             "review_priority": "inventory",
             "reason": "legacy destination inventory without per-file provenance",
+            "sources": [],
         }, "low"))
     return evidence
 
 
 def _native_evidence(report: object) -> list[tuple[dict[str, Any], str]]:
+    binaries = list(getattr(report, "native_binaries", []) or [])
+    binaries.sort(
+        key=lambda item: (
+            str(_value(item, "path", "") or ""),
+            str(_value(item, "sha256", "") or ""),
+        )
+    )
     evidence: list[tuple[dict[str, Any], str]] = []
-    for binary in list(getattr(report, "native_binaries", []) or []):
+    for binary in binaries:
         evidence.append(({
             "kind": "native_binary",
             "path": str(_value(binary, "path", "") or ""),
@@ -239,7 +306,10 @@ def _source_integrity_evidence(report: object) -> list[tuple[dict[str, Any], str
         ("large_binaries_absent_from_source", "high"),
         ("unexpected_urls", "high"),
         ("same_path_modified", "high"),
+        ("grouped_packaged_outputs", "low"),
         ("generated_or_dependency_differences", "low"),
+        ("other_same_path_differences", "low"),
+        ("expected_build_stamp_differences", "low"),
     )
     evidence: list[tuple[dict[str, Any], str]] = []
     for category, confidence in categories:
@@ -247,13 +317,14 @@ def _source_integrity_evidence(report: object) -> list[tuple[dict[str, Any], str
         if not values:
             continue
         samples: list[str] = []
-        for value in values[:5]:
+        for value in values:
             if isinstance(value, dict):
                 sample = value.get("artifact_path") or value.get("path") or value.get("source_path")
                 if sample:
                     samples.append(str(sample))
             else:
                 samples.append(str(value))
+        samples = sorted(set(samples))[:5]
         evidence.append(({
             "kind": "source_artifact_diff",
             "category": category,
@@ -273,6 +344,65 @@ def _structured_evidence(capability_id: str, report: object) -> list[tuple[dict[
     return []
 
 
+def _scanner_status(report: object, *names: str) -> str:
+    wanted = {name.casefold().replace("_", "-") for name in names}
+    for item in list(getattr(report, "scanner_statuses", []) or []):
+        name = str(_value(item, "name", "") or "").casefold().replace("_", "-")
+        if name in wanted:
+            return str(_value(item, "status", "") or "").casefold()
+    return ""
+
+
+def _vulnerability_scanner_states(report: object) -> dict[str, str]:
+    states: dict[str, str] = {}
+    for name in ("trivy", "osv", "osv-scanner"):
+        state = _scanner_status(report, name)
+        if state:
+            states[name] = state
+    return states
+
+
+def _status_without_evidence(capability_id: str, report: object) -> tuple[str, str]:
+    if capability_id == "source_release_integrity":
+        diff = dict(getattr(report, "source_artifact_diff", {}) or {})
+        if diff.get("checked"):
+            return "not_observed", "Exact release-to-source comparison completed without matching evidence."
+        state = _scanner_status(report, "source-artifact-diff")
+        detail = f" (scanner status: {state})" if state else ""
+        return "unknown", f"Exact release-to-source comparison did not complete{detail}."
+
+    if capability_id == "malware":
+        state = _scanner_status(report, "clamav")
+        if state == "passed":
+            return "not_observed", "ClamAV completed without a malware finding."
+        if state == "found_issue":
+            return "unknown", "ClamAV reported an issue but no malware finding was available to this capability summary."
+        if state:
+            return "unknown", f"Malware coverage is incomplete because ClamAV status is {state}."
+        return "unknown", "Malware coverage is unknown because no ClamAV scanner status was recorded."
+
+    if capability_id == "known_vulnerabilities":
+        states = _vulnerability_scanner_states(report)
+        attempted = {name: state for name, state in states.items() if state != "skipped"}
+        incomplete = {name: state for name, state in attempted.items() if state in _INCOMPLETE_SCANNER_STATES}
+        if incomplete:
+            details = ", ".join(f"{name}={state}" for name, state in sorted(incomplete.items()))
+            return "unknown", f"Vulnerability scanner coverage is incomplete: {details}."
+        if any(state == "found_issue" for state in attempted.values()):
+            return "unknown", "A vulnerability scanner reported an issue but no matching finding was available to this capability summary."
+        if any(state == "passed" for state in attempted.values()):
+            return "not_observed", "Available vulnerability scanner coverage completed without matching findings."
+        if states:
+            details = ", ".join(f"{name}={state}" for name, state in sorted(states.items()))
+            return "unknown", f"No vulnerability scanner completed successfully: {details}."
+        return "unknown", "Vulnerability coverage is unknown because no vulnerability scanner status was recorded."
+
+    if str(getattr(report, "final_classification", "") or "") == "AUDIT_ERROR":
+        return "unknown", "The audit ended with AUDIT_ERROR, so absence of evidence is not a reliable clean result."
+
+    return "not_observed", "The completed static audit found no supporting evidence for this capability."
+
+
 def _max_confidence(values: list[str]) -> str:
     if not values:
         return "none"
@@ -289,36 +419,53 @@ def summarize_reviewer_capabilities(report: object) -> list[dict[str, Any]]:
     capabilities: list[dict[str, Any]] = []
 
     for spec in _CAPABILITIES:
-        matched = [finding for finding in findings if _matches_finding(spec.capability_id, finding)]
+        matched = sorted(
+            [finding for finding in findings if _matches_finding(spec.capability_id, finding)],
+            key=_finding_sort_key,
+        )
         compact_evidence: list[dict[str, Any]] = []
         confidences: list[str] = []
 
         for finding in matched:
-            compact_evidence.append(_finding_evidence(finding))
+            if len(compact_evidence) < _MAX_EVIDENCE_PER_CAPABILITY:
+                compact_evidence.append(_finding_evidence(finding))
             confidences.append(_finding_confidence(finding))
 
         structured = _structured_evidence(spec.capability_id, report)
         for item, confidence in structured:
-            compact_evidence.append(item)
+            if len(compact_evidence) < _MAX_EVIDENCE_PER_CAPABILITY:
+                compact_evidence.append(item)
             confidences.append(confidence)
 
-        total = len(compact_evidence)
+        total = len(matched) + len(structured)
         rule_ids = sorted({
             str(_value(finding, "rule_id", "") or "")
             for finding in matched
             if _value(finding, "rule_id", "")
         })
-        observed = total > 0
+        substantive_evidence = total > 0
+        if spec.capability_id == "source_release_integrity":
+            substantive_evidence = bool(structured) or any(
+                _rule_key(finding) != "SOURCE_ARTIFACT_DIFF_INCOMPLETE"
+                for finding in matched
+            )
+        if substantive_evidence:
+            status = "observed"
+            status_reason = "Supporting audit evidence was found."
+        else:
+            status, status_reason = _status_without_evidence(spec.capability_id, report)
+
         capabilities.append({
             "id": spec.capability_id,
             "title": spec.title,
             "question": spec.question,
-            "status": "observed" if observed else "not_observed",
+            "status": status,
+            "status_reason": status_reason,
             "confidence": _max_confidence(confidences),
             "finding_count": len(matched),
             "evidence_count": total,
             "rule_ids": rule_ids,
-            "evidence": compact_evidence[:_MAX_EVIDENCE_PER_CAPABILITY],
+            "evidence": compact_evidence,
             "evidence_truncated": total > _MAX_EVIDENCE_PER_CAPABILITY,
         })
 
@@ -327,6 +474,7 @@ def summarize_reviewer_capabilities(report: object) -> list[dict[str, Any]]:
 
 def _ensure_capabilities(report: object) -> list[dict[str, Any]]:
     capabilities = summarize_reviewer_capabilities(report)
+    setattr(report, "reviewer_capabilities_schema_version", REVIEWER_CAPABILITY_SCHEMA_VERSION)
     setattr(report, "reviewer_capabilities", capabilities)
     return capabilities
 
@@ -373,23 +521,27 @@ def render_reviewer_capabilities(capabilities: list[dict[str, Any]]) -> str:
     lines = [
         "## Reviewer Capability Summary",
         "",
-        "> **Interpretation:** `not_observed` means this static audit found no supporting evidence. It is not proof that the capability is absent.",
+        (
+            "> **Interpretation:** `not_observed` means relevant audit coverage completed without "
+            "supporting evidence. `unknown` means coverage was incomplete or unavailable. Neither "
+            "status proves that a capability is impossible."
+        ),
         "",
         "| Reviewer question | Status | Confidence | Evidence |",
         "|---|---|---|---:|",
     ]
 
-    status_icons = {"observed": "🔎", "not_observed": "➖"}
+    status_icons = {"observed": "🔎", "not_observed": "➖", "unknown": "❓"}
     for capability in capabilities:
-        status = str(capability.get("status") or "not_observed")
+        status = str(capability.get("status") or "unknown")
         confidence = str(capability.get("confidence") or "none")
         lines.append(
             f"| {capability.get('question')} | {status_icons.get(status, '❓')} `{status}` | "
             f"`{confidence}` | {capability.get('evidence_count', 0)} |"
         )
 
-    observed = [cap for cap in capabilities if cap.get("status") == "observed"]
-    for capability in observed:
+    attention = [cap for cap in capabilities if cap.get("status") in {"observed", "unknown"}]
+    for capability in attention:
         lines.extend([
             "",
             f"### {capability.get('title')}",
@@ -397,6 +549,11 @@ def render_reviewer_capabilities(capabilities: list[dict[str, Any]]) -> str:
             f"**Question:** {capability.get('question')}",
             "",
         ])
+        if capability.get("status") == "unknown":
+            lines.extend([
+                f"**Coverage:** {capability.get('status_reason', 'Coverage is incomplete.')}",
+                "",
+            ])
         evidence = list(capability.get("evidence") or [])
         for item in evidence:
             lines.append(f"- {_render_evidence(item)}")
@@ -422,16 +579,24 @@ def install(core: ModuleType) -> ModuleType:
         return core
 
     base_report = core.AuditReport
-    if "reviewer_capabilities" not in getattr(base_report, "__dataclass_fields__", {}):
+    fields_to_add = []
+    existing_fields = getattr(base_report, "__dataclass_fields__", {})
+    if "reviewer_capabilities_schema_version" not in existing_fields:
+        fields_to_add.append((
+            "reviewer_capabilities_schema_version",
+            str,
+            field(default=REVIEWER_CAPABILITY_SCHEMA_VERSION),
+        ))
+    if "reviewer_capabilities" not in existing_fields:
+        fields_to_add.append((
+            "reviewer_capabilities",
+            list[dict[str, Any]],
+            field(default_factory=list),
+        ))
+    if fields_to_add:
         capability_report = make_dataclass(
             "AuditReport",
-            [
-                (
-                    "reviewer_capabilities",
-                    list[dict[str, Any]],
-                    field(default_factory=list),
-                ),
-            ],
+            fields_to_add,
             bases=(base_report,),
         )
         capability_report.__module__ = base_report.__module__
@@ -463,5 +628,6 @@ def install(core: ModuleType) -> ModuleType:
     core.generate_markdown_report = generate_markdown_report
     core.summarize_reviewer_capabilities = summarize_reviewer_capabilities
     core.render_reviewer_capabilities = render_reviewer_capabilities
+    core.REVIEWER_CAPABILITY_SCHEMA_VERSION = REVIEWER_CAPABILITY_SCHEMA_VERSION
     core._reviewer_capabilities_installed = True
     return core
