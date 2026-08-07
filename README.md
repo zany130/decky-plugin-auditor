@@ -10,7 +10,7 @@ The auditor inspects plugin release artifacts and corresponding source without i
 
 This repository is the history-preserving extraction of the auditor previously developed inside [`zany130/decky-plugins-extended`](https://github.com/zany130/decky-plugins-extended).
 
-`main` preserves the auditor behavior validated against the original repository. The project now has an installable `decky-audit` command and an explicit boundary between the reusable engine and configuration owned by a consuming store or review system.
+`main` preserves the auditor behavior validated against the original repository. The project has an installable `decky-audit` command and an explicit boundary between the reusable engine and configuration owned by a consuming store or review system. `decky-plugins-extended` now consumes the standalone auditor from an immutable commit while keeping its repository list, policy, allowlist, schedule, cache, and report-retention decisions in the store repository.
 
 Experimental capa-based native-binary capability analysis is preserved separately in draft PR #2 and is not part of the stable baseline.
 
@@ -107,25 +107,27 @@ The reusable auditor owns:
 - scanner integrations and static-analysis rules
 - built-in report-only policy defaults
 - report generation and cache behavior
+- package, unit, rule-control, and single-plugin smoke validation
 
 A consuming store or review system owns:
 
 - the repository list
 - acceptance and enforcement policy
 - allowlist decisions and approvals
-- schedules, retention, and review workflow integration
+- schedules and audit cadence
+- cache and report retention policy
+- review workflow integration
 
-The root `additional_plugins.txt`, `security-policy.yml`, and `security-allowlist.yml` files remain temporarily for the legacy scheduled migration check. They are not installed command defaults and will move back to the consuming store after its workflow is switched to the standalone CLI.
+Consumer-owned configuration is supplied explicitly at runtime. The standalone repository keeps only generic examples under [`examples/consumer`](examples/consumer); it does not maintain a store catalog or scheduled full-store audit.
 
 ## Roadmap
 
-1. Integrate the standalone CLI into the consuming Decky store.
-2. Remove the temporary store-owned migration inputs from this repository.
-3. Complete the planned Apache-2.0 licensing change.
-4. Group raw findings into reviewer-oriented capability questions.
-5. Compare submissions against previously accepted versions.
-6. Expose reusable GitHub Action and official Decky review integrations.
-7. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
+1. Complete the planned Apache-2.0 licensing and provenance change.
+2. Group raw findings into reviewer-oriented capability questions.
+3. Compare submissions against previously accepted versions.
+4. Expose reusable GitHub Action and official Decky review integrations.
+5. Add reviewer history/persistence and a documented threat model.
+6. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
 
 ## Security model
 
