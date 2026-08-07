@@ -136,8 +136,8 @@ def _matches_finding(capability_id: str, finding: object) -> bool:
     if capability_id == "sensitive_data_access":
         return (
             rule.startswith("CREDENTIAL_")
+            or rule.startswith("SENSITIVE_")
             or "PRIVATE_KEY" in rule
-            or "SENSITIVE_SSH_KEY" in rule
             or bool(tokens & {"SECRET", "SECRETS", "KEYRING", "CREDENTIAL", "CREDENTIALS"})
             or ("PASS" + "WORD") in tokens
         )
@@ -146,7 +146,9 @@ def _matches_finding(capability_id: str, finding: object) -> bool:
         return (
             "NATIVE_BINARY" in rule
             or rule.startswith("BINARY_")
-            or rule in {"ZIP_ONLY_EXECUTABLE", "LARGE_BINARY_ABSENT_FROM_SOURCE"}
+            or rule.endswith("_EXECUTABLE")
+            or rule.endswith("_EXECUTABLES")
+            or rule == "LARGE_BINARY_ABSENT_FROM_SOURCE"
         )
 
     if capability_id == "source_release_integrity":
