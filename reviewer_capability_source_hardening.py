@@ -10,6 +10,7 @@ classification.
 
 from __future__ import annotations
 
+import copy
 from pathlib import PurePosixPath
 from types import ModuleType
 from typing import Any, Callable
@@ -74,6 +75,27 @@ def harden_capability_source_links(report: Any, summary: dict[str, Any]) -> dict
     return summary
 
 
+def _markdown_capability_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Avoid duplicating network source links already rendered below.
+
+    The JSON capability record retains its bounded structured source metadata.
+    Markdown keeps the destination and example source location, but leaves the
+    hyperlink to the dedicated Network Destinations section. This prevents the
+    reviewer summary from doubling identical links when several destinations
+    share one source line.
+    """
+    rendered = copy.deepcopy(summary)
+    for item in rendered.get("items") or []:
+        if item.get("id") != "network_communication":
+            continue
+        for evidence in item.get("evidence") or []:
+            if evidence.get("kind") != "network_destination":
+                continue
+            for source in evidence.get("sources") or []:
+                source.pop("source_url", None)
+    return rendered
+
+
 def install(core: ModuleType) -> ModuleType:
     """Install capability-source-link hardening after capability derivation."""
     if getattr(core, "_reviewer_capability_source_hardening_installed", False):
@@ -104,8 +126,14 @@ def install(core: ModuleType) -> ModuleType:
         return report
 
     def generate_markdown_report(report: Any) -> str:
-        _rebuild(report)
-        return raw_generate_markdown(report)
+        full_summary = _rebuild(report)
+        report.reviewer_capabilities = _markdown_capability_summary(full_summary)
+        try:
+            return raw_generate_markdown(report)
+        finally:
+            # Preserve the richer structured evidence for later JSON rendering
+            # or consumers inspecting the report object after Markdown output.
+            report.reviewer_capabilities = full_summary
 
     core.audit_repository = audit_repository
     core.generate_markdown_report = generate_markdown_report
