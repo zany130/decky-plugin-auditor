@@ -69,6 +69,29 @@ class ReviewerCapabilityTests(unittest.TestCase):
         self.assertEqual(capability["status"], "observed")
         self.assertEqual(capability["rule_ids"], [rule_id])
 
+    def test_existing_sensitive_prefixed_rules_map_to_sensitive_data(self) -> None:
+        for rule_id in (
+            "SENSITIVE_SHADOW",
+            "SENSITIVE_STEAM_AUTH",
+            "SENSITIVE_ENV_HARVEST",
+        ):
+            with self.subTest(rule_id=rule_id):
+                report = ap.AuditReport(findings=[self._finding(rule_id)])
+                capability = self._by_id(report)["sensitive_data_access"]
+                self.assertEqual(capability["status"], "observed")
+                self.assertEqual(capability["rule_ids"], [rule_id])
+
+    def test_grouped_executable_rules_map_to_native_code(self) -> None:
+        for rule_id in (
+            "BUNDLED_DEPENDENCY_EXECUTABLES",
+            "GENERATED_BUILD_EXECUTABLES",
+        ):
+            with self.subTest(rule_id=rule_id):
+                report = ap.AuditReport(findings=[self._finding(rule_id)])
+                capability = self._by_id(report)["native_code"]
+                self.assertEqual(capability["status"], "observed")
+                self.assertEqual(capability["rule_ids"], [rule_id])
+
     def test_structured_evidence_populates_network_native_and_source_groups(self) -> None:
         report = ap.AuditReport(final_classification="MANUAL_REVIEW")
         report.network_destinations = [
