@@ -3,6 +3,8 @@ name: Package Validation
 on:
   pull_request:
     paths:
+      - LICENSE
+      - NOTICE
       - README.md
       - audit_plugins.py
       - consumer_configuration.py
@@ -50,6 +52,68 @@ jobs:
 
       - name: Build source and wheel distributions
         run: uv build
+
+      - name: Verify Apache-2.0 package metadata and notices
+        run: |
+          python - <<'PYEOF'
+          import glob
+          import tarfile
+          import zipfile
+          from pathlib import PurePosixPath
+
+          wheels = glob.glob("dist/*.whl")
+          sdists = glob.glob("dist/*.tar.gz")
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(
+                  f"Expected exactly one wheel and one sdist; wheels={wheels}, sdists={sdists}"
+              )
+
+          required_files = {"LICENSE", "NOTICE"}
+
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = archive.namelist()
+              metadata_names = [
+                  name for name in names if name.endswith(".dist-info/METADATA")
+              ]
+              if len(metadata_names) != 1:
+                  raise SystemExit(f"Expected one wheel METADATA file: {metadata_names}")
+              metadata = archive.read(metadata_names[0]).decode("utf-8")
+              metadata_lines = set(metadata.splitlines())
+              if "License-Expression: Apache-2.0" not in metadata_lines:
+                  raise SystemExit("Wheel metadata does not declare Apache-2.0")
+
+              license_fields = {
+                  line.removeprefix("License-File: ")
+                  for line in metadata.splitlines()
+                  if line.startswith("License-File: ")
+              }
+              if not required_files.issubset(license_fields):
+                  raise SystemExit(
+                      f"Wheel License-File metadata is incomplete: {license_fields}"
+                  )
+
+              packaged_notices = {
+                  PurePosixPath(name).name
+                  for name in names
+                  if ".dist-info/licenses/" in name
+              }
+              if not required_files.issubset(packaged_notices):
+                  raise SystemExit(
+                      f"Wheel is missing license files: {required_files - packaged_notices}"
+                  )
+
+          with tarfile.open(sdists[0], "r:gz") as archive:
+              packaged_notices = {
+                  PurePosixPath(name).name for name in archive.getnames()
+              }
+              if not required_files.issubset(packaged_notices):
+                  raise SystemExit(
+                      f"Source distribution is missing license files: "
+                      f"{required_files - packaged_notices}"
+                  )
+
+          print("Apache-2.0 metadata and LICENSE/NOTICE packaging verified.")
+          PYEOF
 
       - name: Install wheel into a clean environment
         run: |
@@ -161,6 +225,8 @@ jobs:
         with:
           name: package-validation
           path: |
+            LICENSE
+            NOTICE
             uv.lock
             dist/*
             ${{ runner.temp }}/missing-plugins-file.log

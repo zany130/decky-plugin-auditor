@@ -122,12 +122,11 @@ Consumer-owned configuration is supplied explicitly at runtime. The standalone r
 
 ## Roadmap
 
-1. Complete the planned Apache-2.0 licensing and provenance change.
-2. Group raw findings into reviewer-oriented capability questions.
-3. Compare submissions against previously accepted versions.
-4. Expose reusable GitHub Action and official Decky review integrations.
-5. Add reviewer history/persistence and a documented threat model.
-6. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
+1. Group raw findings into reviewer-oriented capability questions.
+2. Compare submissions against previously accepted versions.
+3. Expose reusable GitHub Action and official Decky review integrations.
+4. Add reviewer history/persistence and a documented threat model.
+5. Revisit optional deep native-binary analysis after its runtime and process-management issues are resolved.
 
 ## Security model
 
@@ -135,4 +134,10 @@ The auditor performs static inspection only. It treats release artifacts and sou
 
 ## License and provenance
 
-The extracted history currently retains the MIT license and copyright notice from `decky-plugins-extended`. Any future license change will be handled explicitly in a separate change while preserving the rights and notices attached to previously published code.
+Decky Plugin Auditor is licensed under the [Apache License 2.0](LICENSE). Project attribution and extraction provenance are recorded in [NOTICE](NOTICE).
+
+The auditor was originally designed and implemented by Andres Ortiz inside [`zany130/decky-plugins-extended`](https://github.com/zany130/decky-plugins-extended), then extracted into this repository with its relevant development history preserved.
+
+The preserved git history also contains earlier parent-store commits unrelated to the current auditor distribution. Historical commits attributed to `beallio` changed the former store-owned `additional_plugins.txt` catalog; that catalog was removed from the standalone repository before this relicensing. The current standalone package boundary contains the auditor implementation, scanner integrations and rules, reusable examples, and tests maintained here, while consumer repository lists, policy, allowlists, schedules, caches, and retention remain external.
+
+Package validation verifies that the wheel and source distribution declare `Apache-2.0` and include both `LICENSE` and `NOTICE`.
