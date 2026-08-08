@@ -320,11 +320,20 @@ def _source_integrity_evidence(report: object) -> list[tuple[dict[str, Any], str
         for value in values:
             if isinstance(value, dict):
                 sample = value.get("artifact_path") or value.get("path") or value.get("source_path")
-                if sample:
-                    samples.append(str(sample))
             else:
-                samples.append(str(value))
-        samples = sorted(set(samples))[:5]
+                sample = value
+            if not sample:
+                continue
+            sample_text = str(sample)
+            if sample_text in samples:
+                continue
+            if len(samples) < 5:
+                samples.append(sample_text)
+                samples.sort()
+            elif sample_text < samples[-1]:
+                samples.append(sample_text)
+                samples.sort()
+                samples.pop()
         evidence.append(({
             "kind": "source_artifact_diff",
             "category": category,
