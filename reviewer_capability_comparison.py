@@ -129,8 +129,7 @@ def load_baseline_report(path: str) -> dict[str, dict[str, Any]]:
             raise ValueError("baseline report is missing a repository")
         if key in indexed:
             raise ValueError(
-                "baseline contains more than one report for repository "
-                f"{report.get('repository')!r}"
+                "baseline contains more than one report for the same repository"
             )
         indexed[key] = report
     return indexed
