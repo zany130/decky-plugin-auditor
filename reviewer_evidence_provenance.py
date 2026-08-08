@@ -43,8 +43,9 @@ def _redact(value: object) -> str:
 
 
 def _md(value: object) -> str:
+    """Return redacted text escaped for inline GitHub Markdown rendering."""
     text = " ".join(_redact(value).splitlines()).replace("\\", "\\\\")
-    for char in ("`", "[", "]", "(", ")", "<", ">"):
+    for char in ("`", "*", "_", "~", "[", "]", "(", ")", "<", ">", "|"):
         text = text.replace(char, f"\\{char}")
     return text
 
@@ -106,7 +107,7 @@ def _source_url(report: object, commit: str, path: str, line: int = 0) -> str:
 
 def _validated_url(url: object, commit: object) -> str:
     value, commit = str(url or ""), _sha(commit)
-    if not value or not commit:
+    if not value or not commit or _redact(value) != value:
         return ""
     parsed = urlparse(value)
     if parsed.scheme != "https" or parsed.hostname != "github.com" or parsed.query:
@@ -158,8 +159,10 @@ def _provenance(item: object, report: object, *, network: bool = False) -> dict[
     source_path_raw = str(_value(item, "source_path", "") or "")
     source_path = _redact(source_path_raw)
     raw_commit = str(_value(item, "source_commit", "") or getattr(report, "source_commit", "") or "")
-    commit = _sha(raw_commit)
+    safe_commit = _redact(raw_commit)
+    commit = _sha(raw_commit) if safe_commit == raw_commit else ""
     raw_url = str(_value(item, "source_url", "") or "")
+    safe_url = _redact(raw_url)
     line = int(_value(item, "line", 0) or 0)
     exact = bool(_value(item, "source_line_exact", False))
     note = _redact(_value(item, "source_note", "") or "")
@@ -180,7 +183,7 @@ def _provenance(item: object, report: object, *, network: bool = False) -> dict[
     if status in {"linked", "file-only"} and source_path_raw == source_path:
         wanted_line = line if status == "linked" and exact else 0
         immutable = _source_url(report, commit, source_path_raw, wanted_line)
-        if not immutable:
+        if not immutable and safe_url == raw_url:
             candidate = _validated_url(raw_url, commit)
             if candidate:
                 immutable = candidate if wanted_line else _without_fragment(candidate)
@@ -191,9 +194,9 @@ def _provenance(item: object, report: object, *, network: bool = False) -> dict[
     if source_path:
         record["source_path"] = source_path
     if raw_commit:
-        record["source_commit"] = raw_commit
+        record["source_commit"] = safe_commit
     if raw_url:
-        record["source_url"] = raw_url
+        record["source_url"] = safe_url
     if immutable:
         record["immutable_source_url"] = immutable
     if status in {"linked", "file-only"}:
