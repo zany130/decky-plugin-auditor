@@ -33,6 +33,7 @@ py-modules = [
     "consumer_configuration",
     "credential_exposure_filters",
     "decky_audit_cli",
+    "github_step_summary",
     "metadata_build_stamp_filters",
     "network_destination_filters",
     "packaged_resources",
