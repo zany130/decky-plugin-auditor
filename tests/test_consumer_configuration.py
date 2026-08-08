@@ -59,6 +59,7 @@ class ConsumerConfigurationTests(unittest.TestCase):
             "--policy",
             "consumer/policy.yml",
             "--allowlist=consumer/allowlist.yml",
+            "--baseline-report=consumer/accepted-report.json",
         ]
         raw_main = Mock(return_value=0)
         core = SimpleNamespace(main=raw_main)
@@ -79,6 +80,8 @@ class ConsumerConfigurationTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("consumer-supplied plugin", help_text)
         self.assertIn("built-in report-only policy", help_text)
+        self.assertIn("--baseline-report", help_text)
+        self.assertIn("without inferring acceptance state", help_text)
         raw_main.assert_not_called()
 
 
