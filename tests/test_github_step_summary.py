@@ -9,7 +9,7 @@ from unittest.mock import patch
 import github_step_summary as summary
 
 
-class GithubStepSummaryTests(unittest.TestCase):
+class GitHubStepSummaryTests(unittest.TestCase):
     def report(self, index=0, *, attention=False, same_artifact=True):
         capabilities = []
         if attention:
@@ -64,7 +64,22 @@ class GithubStepSummaryTests(unittest.TestCase):
         self.assertIn("\\|", rendered)
         self.assertIn("\\_", rendered)
 
-    def _fake_core(self, detailed_text):
+    def test_safe_text_preserves_falsy_non_none_values(self):
+        self.assertEqual(summary._safe_text(0), "0")
+        self.assertEqual(summary._safe_text(False), "False")
+        self.assertEqual(summary._safe_text(None), "")
+
+    def test_compact_summary_tries_reduced_all_repository_index_before_header_only(self):
+        payload = {"reports": [self.report(i, attention=True) for i in range(10)]}
+        with patch.object(summary, "SUMMARY_SOFT_LIMIT_BYTES", 2500):
+            rendered = summary.compact_summary(payload)
+
+        self.assertIn("reduced index", rendered)
+        for i in range(10):
+            self.assertIn(f"https://github.com/example/plugin-{i}", rendered)
+        self.assertNotIn("Security-relevant baseline changes", rendered)
+
+    def _fake_core(self, detailed_text, *, raises=False):
         core = ModuleType("fake_audit_core")
         core.DEFAULT_OUTPUT_DIR = "security-reports"
 
@@ -76,10 +91,23 @@ class GithubStepSummaryTests(unittest.TestCase):
                 json.dump({"reports": [self.report(1, attention=True)]}, handle)
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
                 handle.write(detailed_text)
+            if raises:
+                raise RuntimeError("synthetic audit crash")
             return 3
 
         core.main = original_main
         return core
+
+    def test_install_is_idempotent_and_returns_core(self):
+        core = self._fake_core("detail\n")
+        first = summary.install(core)
+        wrapped = core.main
+        second = summary.install(core)
+
+        self.assertIs(first, core)
+        self.assertIs(second, core)
+        self.assertIs(core.main, wrapped)
+        self.assertTrue(core._github_step_summary_installed)
 
     def test_install_preserves_small_detailed_summary_and_exit_code(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -112,6 +140,37 @@ class GithubStepSummaryTests(unittest.TestCase):
             self.assertIn("Security Audit Summary", rendered)
             self.assertIn("https://github.com/example/plugin-1", rendered)
             self.assertNotIn(huge[:1000], rendered)
+
+    def test_install_restores_environment_and_cleans_temp_summary_on_exception(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            actual = Path(temp_dir) / "summary.md"
+            output_dir = Path(temp_dir) / "reports"
+            core = self._fake_core("partial detail\n", raises=True)
+            summary.install(core)
+
+            before = set(Path(tempfile.gettempdir()).glob("decky-audit-summary-*.md"))
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(actual)}):
+                with self.assertRaisesRegex(RuntimeError, "synthetic audit crash"):
+                    core.main(["--output-dir", str(output_dir)])
+                self.assertEqual(os.environ["GITHUB_STEP_SUMMARY"], str(actual))
+            after = set(Path(tempfile.gettempdir()).glob("decky-audit-summary-*.md"))
+
+            self.assertEqual(after, before)
+            self.assertEqual(actual.read_text(encoding="utf-8"), "partial detail\n")
+
+    def test_invalid_compact_input_uses_generic_failure_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            actual = Path(temp_dir) / "summary.md"
+            detailed = Path(temp_dir) / "detail.md"
+            report_json = Path(temp_dir) / "security-report.json"
+            detailed.write_text("x" * (summary.SUMMARY_SOFT_LIMIT_BYTES + 1), encoding="utf-8")
+            report_json.write_text("not json", encoding="utf-8")
+
+            summary._write_selected_summary(str(actual), detailed, report_json)
+            rendered = actual.read_text(encoding="utf-8")
+
+            self.assertIn("could not be rendered", rendered)
+            self.assertNotIn("exceeded", rendered)
 
 
 if __name__ == "__main__":
