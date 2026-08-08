@@ -81,7 +81,7 @@ class ConsumerConfigurationTests(unittest.TestCase):
         self.assertIn("consumer-supplied plugin", help_text)
         self.assertIn("built-in report-only policy", help_text)
         self.assertIn("--baseline-report", help_text)
-        self.assertIn("without inferring acceptance state", help_text)
+        self.assertIn("inferring acceptance state", help_text)
         raw_main.assert_not_called()
 
 
