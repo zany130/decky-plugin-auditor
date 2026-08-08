@@ -39,6 +39,7 @@ py-modules = [
     "plugin_release_utils",
     "report_layout_filters",
     "reviewer_capabilities",
+    "reviewer_capability_comparison",
     "reviewer_evidence_provenance",
     "semgrep_source_link_hardening",
     "semgrep_source_scanning",
