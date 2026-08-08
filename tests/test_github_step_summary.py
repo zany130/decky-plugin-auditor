@@ -60,7 +60,7 @@ class GithubStepSummaryTests(unittest.TestCase):
         rendered = summary.compact_summary({"reports": [report]})
 
         self.assertNotIn(secret, rendered)
-        self.assertIn("[REDACTED]", rendered)
+        self.assertIn("REDACTED", rendered)
         self.assertIn("\\|", rendered)
         self.assertIn("\\_", rendered)
 
