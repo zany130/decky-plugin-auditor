@@ -66,6 +66,14 @@ def _help_parser() -> argparse.ArgumentParser:
         help="Consumer allowlist YAML; empty allowlist when omitted",
     )
     parser.add_argument(
+        "--baseline-report",
+        metavar="PATH",
+        help=(
+            "Optional previous audit JSON selected by the consumer; compare matching "
+            "reviewer capability summaries without inferring acceptance state"
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default="security-reports",
         help="Output directory for reports (default: security-reports)",
