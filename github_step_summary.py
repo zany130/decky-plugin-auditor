@@ -1,6 +1,6 @@
 """Keep GitHub Actions summaries useful and below the platform size limit.
 
-The full Markdown report remains unchanged on disk.  This layer only controls
+The full Markdown report remains unchanged on disk. This layer only controls
 what the auditor writes to ``GITHUB_STEP_SUMMARY``: detailed output is preserved
 for small runs, while large runs fall back to a compact reviewer-oriented index.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
-# GitHub currently rejects a job summary above 1 MiB.  Leave generous headroom
+# GitHub currently rejects a job summary above 1 MiB. Leave generous headroom
 # for anything another step may append to the same summary file.
 SUMMARY_SOFT_LIMIT_BYTES = 900_000
 MAX_CHANGE_SECTIONS = 200
@@ -30,7 +30,7 @@ _SECRET_PATTERNS = (
 
 
 def _safe_text(value: object) -> str:
-    text = str(value or "")
+    text = "" if value is None else str(value)
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     text = " ".join(text.splitlines())
@@ -63,6 +63,56 @@ def _baseline_cell(report: dict[str, Any]) -> str:
     return status or "comparison unavailable"
 
 
+def _header(reports: list[dict[str, Any]], note: str) -> list[str]:
+    return [
+        "## Security Audit Summary",
+        "",
+        f"Audited **{len(reports)}** plugin repository/repositories.",
+        "",
+        _classification_counts(reports),
+        "",
+        note,
+        "",
+    ]
+
+
+def _minimal_index(reports: list[dict[str, Any]]) -> str:
+    """Try a second, smaller all-repository index before header-only fallback."""
+    lines = _header(
+        reports,
+        "The complete per-plugin evidence remains in `security-report.md`. "
+        "This reduced index is used because the richer compact summary was still too large.",
+    )
+    lines.extend(
+        [
+            "| Repository | Classification | Accepted-baseline comparison |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for report in reports:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _safe_text(report.get("repository")),
+                    _safe_text(report.get("final_classification")),
+                    _safe_text(_baseline_cell(report)),
+                ]
+            )
+            + " |"
+        )
+    rendered = "\n".join(lines).rstrip() + "\n"
+    if len(rendered.encode("utf-8")) <= SUMMARY_SOFT_LIMIT_BYTES:
+        return rendered
+    return (
+        "## Security Audit Summary\n\n"
+        f"Audited **{len(reports)}** plugin repository/repositories.\n\n"
+        f"{_classification_counts(reports)}\n\n"
+        "Even the reduced per-repository index exceeded the configured safety limit. "
+        "See `security-report.md` for complete details.\n"
+    )
+
+
 def compact_summary(payload: object) -> str:
     """Render a bounded, reviewer-oriented summary from serialized audit JSON."""
     if not isinstance(payload, dict):
@@ -72,19 +122,17 @@ def compact_summary(payload: object) -> str:
         raise ValueError("audit summary payload must contain reports")
     reports = [item for item in raw_reports if isinstance(item, dict)]
 
-    lines = [
-        "## Security Audit Summary",
-        "",
-        f"Audited **{len(reports)}** plugin repository/repositories.",
-        "",
-        _classification_counts(reports),
-        "",
+    lines = _header(
+        reports,
         "The complete per-plugin evidence remains in the generated `security-report.md` report. "
         "This compact view is used because the detailed report is too large for GitHub's job-summary limit.",
-        "",
-        "| Repository | Release | Classification | Risk | Accepted-baseline comparison |",
-        "| --- | --- | --- | ---: | --- |",
-    ]
+    )
+    lines.extend(
+        [
+            "| Repository | Release | Classification | Risk | Accepted-baseline comparison |",
+            "| --- | --- | --- | ---: | --- |",
+        ]
+    )
 
     for report in reports:
         lines.append(
@@ -144,16 +192,7 @@ def compact_summary(payload: object) -> str:
 
     result = "\n".join(lines).rstrip() + "\n"
     if len(result.encode("utf-8")) > SUMMARY_SOFT_LIMIT_BYTES:
-        # This should be unreachable with the bounded fields above, but fail
-        # closed to a tiny deterministic message rather than asking GitHub to
-        # reject the entire job summary.
-        return (
-            "## Security Audit Summary\n\n"
-            f"Audited **{len(reports)}** plugin repository/repositories.\n\n"
-            f"{_classification_counts(reports)}\n\n"
-            "The compact summary also exceeded the configured safety limit. "
-            "See the generated `security-report.md` report for complete details.\n"
-        )
+        return _minimal_index(reports)
     return result
 
 
@@ -186,8 +225,8 @@ def _write_selected_summary(
         except Exception:
             selected = (
                 "## Security Audit Summary\n\n"
-                "The detailed job summary exceeded the configured safety limit. "
-                "See the generated Markdown report for complete details.\n"
+                "A bounded GitHub job summary could not be rendered from the generated audit output. "
+                "See the report artifact and job logs for complete details.\n"
             )
 
     try:
@@ -198,8 +237,11 @@ def _write_selected_summary(
         pass
 
 
-def install(core: ModuleType) -> None:
+def install(core: ModuleType) -> ModuleType:
     """Wrap ``core.main`` so detailed reports cannot overflow job summaries."""
+    if getattr(core, "_github_step_summary_installed", False):
+        return core
+
     original_main: Callable[..., int] = core.main
 
     def bounded_main(argv: object = None) -> int:
@@ -215,15 +257,20 @@ def install(core: ModuleType) -> None:
             result = original_main(argv)
         finally:
             os.environ["GITHUB_STEP_SUMMARY"] = actual_summary
-
-        try:
-            report_json = _output_dir(core, argv) / "security-report.json"
-            _write_selected_summary(actual_summary, temp_path, report_json)
-        finally:
             try:
-                temp_path.unlink()
-            except OSError:
+                report_json = _output_dir(core, argv) / "security-report.json"
+                _write_selected_summary(actual_summary, temp_path, report_json)
+            except Exception:
+                # Never mask the audit's own return value or exception with
+                # non-critical summary rendering behavior.
                 pass
+            finally:
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
         return result
 
     core.main = bounded_main
+    core._github_step_summary_installed = True
+    return core
