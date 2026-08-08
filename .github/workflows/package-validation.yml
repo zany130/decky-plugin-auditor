@@ -10,6 +10,7 @@ on:
       - consumer_configuration.py
       - decky_audit_cli.py
       - examples/**
+      - github_step_summary.py
       - packaged_resources.py
       - reviewer_capabilities.py
       - reviewer_capability_comparison.py

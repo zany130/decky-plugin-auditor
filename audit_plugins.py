@@ -5,8 +5,9 @@ The implementation remains in :mod:`audit_plugins_core`; context-aware noise,
 network-destination, exact-source dependency, Semgrep, content-comparison,
 source-mapping hardening, exact metadata build-stamp, behavioral false-positive,
 credential-exposure, packaged-artifact, source-link, reviewer-capability,
-reviewer-evidence provenance, reviewer-capability comparison, and report-layout
-policies are installed before the module is exposed to callers or the CLI runs.
+reviewer-evidence provenance, reviewer-capability comparison, report-layout, and
+bounded GitHub-summary policies are installed before the module is exposed to
+callers or the CLI runs.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from artifact_diff_filters import install as install_artifact_diff_filters
 from audit_noise_filters import install as install_noise_filters
 from behavior_false_positive_filters import install as install_behavior_filters
 from credential_exposure_filters import install as install_credential_policy
+from github_step_summary import install as install_github_step_summary
 from metadata_build_stamp_filters import install as install_metadata_build_stamp_filters
 from network_destination_filters import install as install_network_destination_filters
 from packaged_resources import resolve_distribution_file
@@ -58,6 +60,7 @@ install_reviewer_capabilities(_core)
 install_reviewer_evidence_provenance(_core)
 install_reviewer_capability_comparison(_core)
 install_report_layout(_core)
+install_github_step_summary(_core)
 
 if __name__ == "__main__":
     raise SystemExit(_core.main())
