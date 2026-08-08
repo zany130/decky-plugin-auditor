@@ -76,6 +76,44 @@ class ReviewerCapabilityComparisonTests(unittest.TestCase):
             or self._capability(capability_id)
             for capability_id in CAPABILITY_IDS
         ]
+
+        # Keep synthetic reports internally consistent with real serialized
+        # reports: semantic comparison reads the full structured inventories,
+        # while capability evidence is only the bounded reviewer projection.
+        report.network_destinations = []
+        report.native_binaries = []
+        for capability in report.reviewer_capabilities:
+            for item in capability.get("evidence") or []:
+                if item.get("kind") == "network_destination":
+                    sources = []
+                    for source in item.get("sources") or []:
+                        record = dict(source)
+                        if record.get("source_status") in {"linked", "file-only"}:
+                            record.setdefault("source_path", record.get("path", ""))
+                            record.setdefault("source_commit", commit)
+                            if record.get("immutable_source_url"):
+                                record.setdefault(
+                                    "source_url", record["immutable_source_url"]
+                                )
+                        sources.append(record)
+                    report.network_destinations.append(
+                        {
+                            "destination": item.get("destination", ""),
+                            "confidence": item.get("confidence", "low"),
+                            "review_priority": item.get("review_priority", ""),
+                            "reason": item.get("reason", ""),
+                            "sources": sources,
+                        }
+                    )
+                elif item.get("kind") == "native_binary":
+                    report.native_binaries.append(
+                        {
+                            "path": item.get("path", ""),
+                            "sha256": item.get("sha256", ""),
+                            "label": item.get("label", ""),
+                            "architecture": item.get("architecture", ""),
+                        }
+                    )
         return report
 
     def test_not_observed_to_observed_is_newly_observed_with_immutable_evidence(self) -> None:
