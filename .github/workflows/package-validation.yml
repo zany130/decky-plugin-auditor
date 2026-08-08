@@ -12,6 +12,7 @@ on:
       - examples/**
       - packaged_resources.py
       - reviewer_capabilities.py
+      - reviewer_evidence_provenance.py
       - semgrep_source_scanning.py
       - semgrep-rules.yml
       - pyproject.toml
