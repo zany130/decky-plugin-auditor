@@ -122,11 +122,12 @@ jobs:
           "$RUNNER_TEMP/package-venv/bin/python" -m pip install --upgrade pip
           "$RUNNER_TEMP/package-venv/bin/python" -m pip install dist/*.whl
 
-      - name: Verify installed command, resources, and list requirement
+      - name: Verify installed command, resources, capability contract, and list requirement
         run: |
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/package-venv/bin/decky-audit" --help
           "$RUNNER_TEMP/package-venv/bin/python" - <<'PYEOF'
+          import json
           import os
           import audit_plugins
           import consumer_configuration
@@ -136,6 +137,21 @@ jobs:
           print(f"Packaged Semgrep rules: {rules}")
           if not os.path.isfile(rules):
               raise SystemExit(f"Packaged Semgrep rules not found: {rules}")
+
+          report = audit_plugins.AuditReport(final_classification="PASS")
+          payload = json.loads(audit_plugins.generate_json_report(report))
+          if payload.get("reviewer_capabilities_schema_version") != "1":
+              raise SystemExit("Installed capability schema version is not 1")
+          capabilities = payload.get("reviewer_capabilities") or []
+          if len(capabilities) != 9:
+              raise SystemExit(
+                  f"Installed reviewer capability contract has {len(capabilities)} items instead of 9"
+              )
+          capability_ids = {item.get("id") for item in capabilities}
+          if not {"malware", "known_vulnerabilities"}.issubset(capability_ids):
+              raise SystemExit(
+                  f"Installed reviewer capability contract is missing scanner groups: {capability_ids}"
+              )
           PYEOF
 
           set +e

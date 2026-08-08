@@ -18,13 +18,14 @@ class ReviewerCapabilityTests(unittest.TestCase):
         scanner: str = "static",
         allowlisted: bool = False,
         path: str = "main.py",
+        line: int = 7,
     ) -> ap.Finding:
         return ap.Finding(
             rule_id=rule_id,
             severity=severity,
             classification=classification,
             path=path,
-            line=7,
+            line=line,
             message=f"evidence for {rule_id}",
             evidence="fixture evidence",
             scanner=scanner,
@@ -100,7 +101,18 @@ class ReviewerCapabilityTests(unittest.TestCase):
                 "confidence": "high",
                 "review_priority": "primary",
                 "reason": "referenced by plugin-owned runtime code",
-                "sources": [],
+                "sources": [
+                    {
+                        "path": "main.py",
+                        "line": 20,
+                        "provenance": "plugin_runtime",
+                        "confidence": "high",
+                        "source_status": "linked",
+                        "source_url": "https://github.com/example/plugin/blob/abc/main.py#L20",
+                        "source_path": "main.py",
+                        "source_commit": "abc",
+                    }
+                ],
             }
         ]
         report.native_binaries = [
@@ -124,8 +136,18 @@ class ReviewerCapabilityTests(unittest.TestCase):
 
         capabilities = self._by_id(report)
 
-        self.assertEqual(capabilities["network_communication"]["status"], "observed")
-        self.assertEqual(capabilities["network_communication"]["confidence"], "high")
+        network = capabilities["network_communication"]
+        self.assertEqual(network["status"], "observed")
+        self.assertEqual(network["confidence"], "high")
+        source = network["evidence"][0]["sources"][0]
+        self.assertEqual(source["path"], "main.py")
+        self.assertEqual(source["line"], 20)
+        self.assertEqual(source["provenance"], "plugin_runtime")
+        self.assertEqual(source["source_commit"], "abc")
+        self.assertEqual(
+            source["source_url"],
+            "https://github.com/example/plugin/blob/abc/main.py#L20",
+        )
         self.assertEqual(capabilities["native_code"]["status"], "observed")
         self.assertEqual(capabilities["native_code"]["confidence"], "high")
         self.assertEqual(capabilities["source_release_integrity"]["status"], "observed")
@@ -150,8 +172,104 @@ class ReviewerCapabilityTests(unittest.TestCase):
         self.assertEqual(capability["confidence"], "high")
         self.assertEqual(capability["finding_count"], 1)
 
+    def test_malware_finding_is_separate_from_known_vulnerabilities(self) -> None:
+        report = ap.AuditReport(
+            findings=[
+                self._finding(
+                    "MALWARE",
+                    severity="critical",
+                    classification="BLOCK",
+                    scanner="clamav",
+                    path="bin/helper",
+                )
+            ],
+            scanner_statuses=[ap.ScannerStatus(name="clamav", status="found_issue")],
+        )
+
+        capabilities = self._by_id(report)
+
+        self.assertEqual(capabilities["malware"]["status"], "observed")
+        self.assertEqual(capabilities["malware"]["finding_count"], 1)
+        self.assertNotIn("MALWARE", capabilities["known_vulnerabilities"]["rule_ids"])
+
+    def test_clean_scanner_coverage_can_report_not_observed(self) -> None:
+        report = ap.AuditReport(
+            final_classification="PASS",
+            scanner_statuses=[
+                ap.ScannerStatus(name="clamav", status="passed"),
+                ap.ScannerStatus(name="trivy", status="passed"),
+            ],
+            source_artifact_diff={"checked": True},
+        )
+
+        capabilities = self._by_id(report)
+
+        self.assertEqual(capabilities["malware"]["status"], "not_observed")
+        self.assertEqual(capabilities["known_vulnerabilities"]["status"], "not_observed")
+        self.assertEqual(capabilities["source_release_integrity"]["status"], "not_observed")
+
+    def test_incomplete_scanner_coverage_is_unknown_not_false_clean(self) -> None:
+        report = ap.AuditReport(
+            final_classification="PASS",
+            scanner_statuses=[
+                ap.ScannerStatus(name="clamav", status="unavailable"),
+                ap.ScannerStatus(name="trivy", status="failed"),
+                ap.ScannerStatus(name="source-artifact-diff", status="unavailable"),
+            ],
+        )
+
+        capabilities = self._by_id(report)
+
+        self.assertEqual(capabilities["malware"]["status"], "unknown")
+        self.assertIn("ClamAV status is unavailable", capabilities["malware"]["status_reason"])
+        self.assertEqual(capabilities["known_vulnerabilities"]["status"], "unknown")
+        self.assertIn("trivy=failed", capabilities["known_vulnerabilities"]["status_reason"])
+        self.assertEqual(capabilities["source_release_integrity"]["status"], "unknown")
+
+    def test_incomplete_source_comparison_finding_remains_unknown(self) -> None:
+        report = ap.AuditReport(
+            final_classification="PASS_WITH_WARNINGS",
+            findings=[
+                self._finding(
+                    "SOURCE_ARTIFACT_DIFF_INCOMPLETE",
+                    severity="low",
+                    classification="PASS_WITH_WARNINGS",
+                    scanner="source-artifact-diff",
+                    path="",
+                    line=0,
+                )
+            ],
+            scanner_statuses=[
+                ap.ScannerStatus(name="source-artifact-diff", status="unavailable"),
+            ],
+        )
+
+        capability = self._by_id(report)["source_release_integrity"]
+
+        self.assertEqual(capability["status"], "unknown")
+        self.assertEqual(capability["evidence_count"], 1)
+        self.assertIn("did not complete", capability["status_reason"])
+
+    def test_audit_error_makes_unobserved_generic_capability_unknown(self) -> None:
+        report = ap.AuditReport(
+            final_classification="AUDIT_ERROR",
+            scanner_statuses=[
+                ap.ScannerStatus(name="clamav", status="passed"),
+                ap.ScannerStatus(name="trivy", status="passed"),
+            ],
+        )
+
+        capabilities = self._by_id(report)
+
+        self.assertEqual(capabilities["command_execution"]["status"], "unknown")
+        self.assertEqual(capabilities["network_communication"]["status"], "unknown")
+        # Scanner-specific questions can still be answered when their own coverage completed.
+        self.assertEqual(capabilities["malware"]["status"], "not_observed")
+        self.assertEqual(capabilities["known_vulnerabilities"]["status"], "not_observed")
+
     def test_unrelated_finding_does_not_invent_capabilities(self) -> None:
         report = ap.AuditReport(
+            final_classification="PASS",
             findings=[
                 self._finding(
                     "ARCHIVE_COMPRESSION_RATIO",
@@ -159,7 +277,12 @@ class ReviewerCapabilityTests(unittest.TestCase):
                     classification="PASS_WITH_WARNINGS",
                     scanner="archive",
                 )
-            ]
+            ],
+            scanner_statuses=[
+                ap.ScannerStatus(name="clamav", status="passed"),
+                ap.ScannerStatus(name="trivy", status="passed"),
+            ],
+            source_artifact_diff={"checked": True},
         )
 
         capabilities = self._by_id(report)
@@ -185,6 +308,11 @@ class ReviewerCapabilityTests(unittest.TestCase):
             final_classification="MANUAL_REVIEW",
             risk_score=15,
             findings=[self._finding("PRIVILEGE_SUDO")],
+            scanner_statuses=[
+                ap.ScannerStatus(name="clamav", status="passed"),
+                ap.ScannerStatus(name="trivy", status="passed"),
+            ],
+            source_artifact_diff={"checked": True},
         )
 
         payload = json.loads(ap.generate_json_report(report))
@@ -195,15 +323,32 @@ class ReviewerCapabilityTests(unittest.TestCase):
             for item in payload["reviewer_capabilities"]
             if item["id"] == "privileged_system_access"
         )
+        self.assertEqual(payload["reviewer_capabilities_schema_version"], "1")
+        self.assertEqual(len(payload["reviewer_capabilities"]), 9)
         self.assertEqual(capability["status"], "observed")
         self.assertIn("## Reviewer Capability Summary", markdown)
         self.assertIn(
             "Can the plugin request elevated privileges or control system-level resources?",
             markdown,
         )
-        self.assertIn("not proof that the capability is absent", markdown)
+        self.assertIn("`unknown` means coverage was incomplete", markdown)
         self.assertEqual(report.final_classification, "MANUAL_REVIEW")
         self.assertEqual(report.risk_score, 15)
+
+    def test_unknown_capability_explains_coverage_in_markdown(self) -> None:
+        report = ap.AuditReport(
+            final_classification="PASS",
+            scanner_statuses=[
+                ap.ScannerStatus(name="clamav", status="unavailable"),
+                ap.ScannerStatus(name="trivy", status="passed"),
+            ],
+            source_artifact_diff={"checked": True},
+        )
+
+        markdown = ap.generate_markdown_report(report)
+
+        self.assertIn("### Malware detection", markdown)
+        self.assertIn("ClamAV status is unavailable", markdown)
 
     def test_evidence_is_bounded_but_counts_remain_complete(self) -> None:
         report = ap.AuditReport(
@@ -218,6 +363,55 @@ class ReviewerCapabilityTests(unittest.TestCase):
         self.assertEqual(capability["evidence_count"], 25)
         self.assertEqual(len(capability["evidence"]), 20)
         self.assertTrue(capability["evidence_truncated"])
+
+    def test_finding_evidence_order_is_deterministic(self) -> None:
+        report = ap.AuditReport(
+            findings=[
+                self._finding(
+                    "EXEC_OS_SYSTEM",
+                    path="z.py",
+                    classification="MANUAL_REVIEW",
+                ),
+                self._finding(
+                    "EXEC_OS_SYSTEM",
+                    path="a.py",
+                    classification="BLOCK",
+                ),
+            ]
+        )
+
+        capability = self._by_id(report)["command_execution"]
+
+        self.assertEqual(
+            [item["path"] for item in capability["evidence"]],
+            ["a.py", "z.py"],
+        )
+
+    def test_network_evidence_order_is_deterministic(self) -> None:
+        report = ap.AuditReport(final_classification="PASS")
+        report.network_destinations = [
+            {
+                "destination": "z.example.com",
+                "confidence": "low",
+                "review_priority": "inventory",
+                "reason": "reference only",
+                "sources": [],
+            },
+            {
+                "destination": "a.example.com",
+                "confidence": "high",
+                "review_priority": "primary",
+                "reason": "runtime",
+                "sources": [],
+            },
+        ]
+
+        capability = self._by_id(report)["network_communication"]
+
+        self.assertEqual(
+            [item["destination"] for item in capability["evidence"]],
+            ["a.example.com", "z.example.com"],
+        )
 
 
 if __name__ == "__main__":
