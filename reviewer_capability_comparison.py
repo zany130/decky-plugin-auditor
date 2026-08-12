@@ -164,15 +164,28 @@ def _network_destinations(
 ) -> set[str]:
     structured = _value(report, "network_destinations", _MISSING)
     if structured is not _MISSING and isinstance(structured, list):
-        return {
-            _safe_text(_value(item, "destination", ""))
+        structured_values = {
+            destination
             for item in structured
-            if _value(item, "destination", "")
+            if (destination := _safe_text(
+                _value(item, "destination", "")
+            ).strip())
         }
+        if structured_values:
+            return structured_values
 
+    # Cached reports produced before the rich structured inventory was
+    # persisted can expose an explicit empty ``network_destinations``
+    # list while retaining the complete inventory in
+    # ``extracted_domains``. Treat a semantically empty structured list
+    # as a compatibility gap, not proof that every destination vanished.
     legacy = _value(report, "extracted_domains", _MISSING)
     if legacy is not _MISSING and isinstance(legacy, list):
-        return {_safe_text(value) for value in legacy if value}
+        return {
+            destination
+            for value in legacy
+            if (destination := _safe_text(value).strip())
+        }
 
     return _capability_network_destinations(capability)
 
